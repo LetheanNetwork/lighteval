@@ -36,7 +36,7 @@ from lighteval.tasks.requests import Doc
 
 
 TEMPLATE = """
-Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.
+Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of {letters}. Think step by step before answering.
 
 {question}
 
@@ -46,17 +46,19 @@ Answer:""".strip()
 
 
 def mmlu_pro_prompt_function(line, task_name: str = None):
-    choices = "\n".join([f"{letter}: {choice}" for letter, choice in zip(ascii_uppercase, line["options"])])
+    letters = list(ascii_uppercase[: len(line["options"])])
+    choices_text = "\n".join([f"{letter}: {choice}" for letter, choice in zip(letters, line["options"])])
 
     query = TEMPLATE.format(
         question=line["question"],
-        choices=choices,
+        choices=choices_text,
+        letters="".join(letters),
     )
 
     return Doc(
         task_name=task_name,
         query=query,
-        choices=ascii_uppercase[: len(choices)],
+        choices=letters,
         gold_index=line["answer_index"],
         instruction=query,
     )
