@@ -361,7 +361,7 @@ class LightevalTask:
                 self._docs = self.remove_duplicate_docs(self._docs)
         return self._docs
 
-    def get_docs(self, max_samples: int | None = None) -> list[Doc]:
+    def get_docs(self, max_samples: int | None = None, samples_start: int = 0) -> list[Doc]:
         """Get evaluation documents with few-shot examples and generation parameters configured.
 
         Retrieves evaluation documents, optionally limits the number of samples,
@@ -370,7 +370,12 @@ class LightevalTask:
 
         Args:
             max_samples (int | None, optional): Maximum number of documents to return.
-                If None, returns all available documents. Defaults to None.
+                If None, returns all remaining documents from samples_start onwards.
+            samples_start (int, optional): Zero-based offset into the shuffled document
+                list. Lets callers run a window like [start:start+max] across multiple
+                invocations without re-running already-covered questions. The shuffle
+                seed is fixed (42) so windows are deterministic and stable between calls.
+                Defaults to 0.
 
         Returns:
             list[Doc]: List of documents ready for evaluation with few-shot examples
@@ -384,14 +389,20 @@ class LightevalTask:
         if len(eval_docs) == 0:
             raise ValueError(f"Task {self.name} has no documents to evaluate skipping.")
 
-        n_samples = min(max_samples, len(eval_docs)) if max_samples else len(eval_docs)
         rnd = random.Random()
         rnd.seed(42)
         rnd.shuffle(eval_docs)
 
+        start = max(samples_start, 0)
+        if start >= len(eval_docs):
+            return []
+        remaining = len(eval_docs) - start
+        n_samples = min(max_samples, remaining) if max_samples else remaining
+        window = eval_docs[start : start + n_samples]
+
         docs = []
 
-        for doc in eval_docs[:n_samples]:
+        for doc in window:
             num_fewshots = self.dataset_config.num_fewshots
             doc.task_name = self.full_name
             doc.fewshot_samples = self.fewshot_sampler.sample_fewshot_examples(

@@ -40,6 +40,7 @@ from lighteval.cli_args import (
     remove_reasoning_tags,
     results_org,
     results_path_template,
+    samples_start,
     save_details,
     tasks,
 )
@@ -72,6 +73,7 @@ def custom(
     save_details: save_details.type = save_details.default,
     # === debug ===
     max_samples: max_samples.type = max_samples.default,
+    samples_start: samples_start.type = samples_start.default,
     job_id: job_id.type = job_id.default,
 ):
     """Evaluate custom models (can be anything).
@@ -102,6 +104,7 @@ def custom(
         custom_tasks_directory=custom_tasks,
         num_fewshot_seeds=num_fewshot_seeds,
         max_samples=max_samples,
+        samples_start=samples_start,
         remove_reasoning_tags=remove_reasoning_tags,
         reasoning_tags=reasoning_tags,
         load_tasks_multilingual=load_tasks_multilingual,

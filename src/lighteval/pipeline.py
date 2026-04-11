@@ -89,6 +89,7 @@ class PipelineParameters:
     custom_tasks_directory: str | None = None
     num_fewshot_seeds: int = 1
     max_samples: int | None = None
+    samples_start: int = 0
     cot_prompt: str | None = None
     remove_reasoning_tags: bool = True
     reasoning_tags: str | list[tuple[str, str]] = "[('<think>', '</think>')]"
@@ -221,7 +222,11 @@ class Pipeline:
         self.tasks_dict: dict[str, LightevalTask] = self.registry.load_tasks()
         LightevalTask.load_datasets(self.tasks_dict, self.pipeline_parameters.dataset_loading_processes)
         self.documents_dict = {
-            task.full_name: task.get_docs(self.pipeline_parameters.max_samples) for _, task in self.tasks_dict.items()
+            task.full_name: task.get_docs(
+                self.pipeline_parameters.max_samples,
+                samples_start=self.pipeline_parameters.samples_start,
+            )
+            for _, task in self.tasks_dict.items()
         }
 
         self.sampling_docs = collections.defaultdict(list)

@@ -226,6 +226,17 @@ max_samples = Arg(
     default=None,
 )
 
+samples_start = Arg(
+    type=Annotated[
+        int,
+        Option(
+            help="Zero-based offset into the (shuffled) evaluation set. Combined with --max-samples this lets callers run a window like [start:start+max]. The shuffle seed is fixed so windows are stable across invocations — useful for incremental / resumable runs where a caller tracks how many questions it has already evaluated.",
+            rich_help_panel=HELP_PANEL_NAME_3,
+        ),
+    ],
+    default=0,
+)
+
 job_id = Arg(
     type=Annotated[
         int,
