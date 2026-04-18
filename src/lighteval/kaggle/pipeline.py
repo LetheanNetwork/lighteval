@@ -1,0 +1,428 @@
+# Gemma4Eval — the Kaggle-notebook-user API.
+#
+# Wraps lighteval.pipeline.Pipeline with the orchestration a Kaggle user
+# expects out of the box: KaggleHub-resolved models, dual-GPU paired runs
+# on T4 x2, results persisted as parquets under /kaggle/working, and a
+# Gemma4EvalResult object ready for .dashboard() / .push_to_hub().
+#
+# Usage:
+#     from lighteval.kaggle import Gemma4Eval
+#     run = Gemma4Eval(
+#         base='google/gemma-4/transformers/gemma-4-e2b-it',
+#         test='my-user/my-gemma4-finetune',
+#         task='mmlu_pro',
+#         rounds=8,
+#     ).run()
+#     run.dashboard()
+#     run.push_to_hub('my-user/gemma4-eval-results')  # optional
+from __future__ import annotations
+
+import shutil
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional
+
+from lighteval.models.transformers.gemma4_model import (
+    Gemma4Model,
+    GenerationConfig,
+)
+from lighteval.pipeline import (
+    ParallelismManager,
+    Pipeline,
+    PipelineParameters,
+)
+
+from .loader import resolve_model_source
+from .tracker import KaggleEvaluationTracker
+
+
+# Common lighteval task aliases, expanded into the full suite|name|few_shot|truncate form.
+_TASK_ALIASES = {
+    "mmlu_pro": "lighteval|mmlu_pro|0|0",
+    "global_mmlu": "lighteval|global_mmlu_full_en|0|0",
+    "ifeval": "lighteval|ifeval|0|0",
+}
+
+
+def _expand_task(task: str) -> str:
+    """Resolve a Kaggle-friendly alias to a full lighteval task spec."""
+    if "|" in task:
+        return task
+    return _TASK_ALIASES.get(task, task)
+
+
+@dataclass
+class Gemma4EvalResult:
+    """Outcome of a Gemma4Eval.run(). Holds paths to the details parquets
+    plus metadata, and exposes analyze / dashboard / save / push helpers."""
+
+    run_name: str
+    task: str
+    base_source: str
+    test_source: str
+    rounds: int
+    n_questions: int = 1
+    samples_start: int = 0
+    hardware_plan: Optional[str] = None
+    base_detail_paths: List[str] = field(default_factory=list)
+    test_detail_paths: List[str] = field(default_factory=list)
+    output_dir: Optional[Path] = None
+
+    # Cached parse outputs (populated by .analyze()).
+    _analysis: Optional[tuple] = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------
+    # Parse.
+    # ------------------------------------------------------------------
+    def analyze(self):
+        """Parse the paired details parquets into (detail_df, question_summaries, totals).
+
+        Results are cached so subsequent calls (e.g. dashboard + save_report)
+        don't re-read the parquets.
+        """
+        if self._analysis is not None:
+            return self._analysis
+        from .analyze import analyze_pair
+
+        self._analysis = analyze_pair(
+            base_paths=self.base_detail_paths,
+            test_paths=self.test_detail_paths,
+            base_model_name=self.base_source,
+            test_model_name=self.test_source,
+            run_name=self.run_name,
+            task=self.task,
+            samples_start=self.samples_start,
+        )
+        return self._analysis
+
+    # ------------------------------------------------------------------
+    # Dashboard.
+    # ------------------------------------------------------------------
+    def dashboard(self, **kwargs) -> str:
+        """Render the comparison dashboard inline and return the HTML.
+
+        Delegates to lighteval.kaggle.dashboard.render. Accepts keyword
+        overrides (max_questions, preview_chars, show_plotly, display_inline).
+        """
+        from .dashboard import render as _render
+
+        return _render(self, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Persist.
+    # ------------------------------------------------------------------
+    def save_report(self) -> Path:
+        """Write summary.csv / summary.json / report.md / visual_report.html
+        to the output directory. Returns the output directory path."""
+        import datetime as dt
+
+        import pandas as pd
+
+        if self.output_dir is None:
+            raise RuntimeError(
+                "output_dir is unset — run() must complete before save_report()."
+            )
+
+        detail_df, question_summaries, totals = self.analyze()
+        out = Path(self.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        detail_df.to_parquet(out / "comparison_details.parquet", index=False)
+
+        pd.DataFrame(
+            [
+                {"side": side, **values}
+                for side, values in totals.items()
+                if isinstance(values, dict)
+            ]
+        ).to_csv(out / "summary.csv", index=False)
+
+        (out / "summary.json").write_text(
+            json.dumps(
+                {
+                    "run_name": self.run_name,
+                    "task": self.task,
+                    "base_source": self.base_source,
+                    "test_source": self.test_source,
+                    "rounds": self.rounds,
+                    "n_questions": self.n_questions,
+                    "samples_start": self.samples_start,
+                    "totals": totals,
+                    "questions": question_summaries,
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                },
+                indent=2,
+            )
+        )
+
+        lines: List[str] = [
+            f"# Gemma 4 Eval: {self.run_name}",
+            "",
+            f"- task: `{self.task}`",
+            f"- base: `{self.base_source}`",
+            f"- test: `{self.test_source}`",
+            f"- window: samples_start `{self.samples_start}`, "
+            f"questions `{self.n_questions}`, rounds `{self.rounds}`",
+            "",
+            "| Side | Model | Samples | Correct | Per-round acc | Majority acc |",
+            "|---|---|---:|---:|---:|---:|",
+        ]
+        for side in ("base", "test"):
+            t = totals[side]
+            lines.append(
+                f"| {side} | `{t['model']}` | {t['samples']} | {t['correct']} | "
+                f"{t['per_round_accuracy_pct']:.2f}% | {t['majority_accuracy_pct']:.2f}% |"
+            )
+        lines.append("")
+        lines.append(f"Per-round delta: **{totals['delta_pp']:+.2f} pp**")
+        lines.append(f"Majority delta: **{totals['majority_delta_pp']:+.2f} pp**")
+        lines.append("")
+        for q in question_summaries:
+            lines.append(f"## Q{q['question_index']}: {q['question'][:140]}")
+            lines.append(f"Gold: **{q['gold_letter']}** {q['gold_text']}")
+            lines.append(
+                f"- base answers: `{q['base']['answers']}` hits "
+                f"{sum(q['base']['hits'])}/{q['base']['total']}"
+            )
+            lines.append(
+                f"- test answers: `{q['test']['answers']}` hits "
+                f"{sum(q['test']['hits'])}/{q['test']['total']}"
+            )
+            lines.append("")
+        (out / "report.md").write_text("\n".join(lines))
+
+        # If the dashboard was rendered previously, write a combined HTML
+        # report — safe no-op otherwise.
+        html_body = getattr(self, "_dashboard_html", "")
+        plotly_sections = getattr(self, "_dashboard_plotly_html", [])
+        if html_body:
+            doc = (
+                "<!doctype html><html><head><meta charset=\"utf-8\">"
+                "<title>Gemma 4 Eval Visual Report</title></head><body>"
+                + html_body
+                + "".join(plotly_sections)
+                + "</body></html>"
+            )
+            (out / "visual_report.html").write_text(doc)
+
+        print(f"Saved report under {out}")
+        return out
+
+    # ------------------------------------------------------------------
+    # Publish.
+    # ------------------------------------------------------------------
+    def push_to_hub(
+        self,
+        repo_id: str,
+        *,
+        private: bool = False,
+        commit_message: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> str:
+        """Upload the run directory to a HuggingFace Hub dataset repo.
+
+        Calls save_report() first if no summary.json exists yet, so the
+        uploaded folder is always self-describing.
+        """
+        from .hub import push_result as _push
+
+        return _push(
+            self,
+            repo_id,
+            private=private,
+            commit_message=commit_message,
+            token=token,
+        )
+
+
+class Gemma4Eval:
+    """Paired Gemma 4 evaluation across base and test models.
+
+    Parameters
+    ----------
+    base, test : str
+        Model sources. Each may be a KaggleHub slug, HF Hub repo id, or
+        local path — `resolve_model_source` figures out which.
+    task : str, default 'mmlu_pro'
+        Task alias or full lighteval task spec.
+    rounds : int, default 1
+        Sample each question this many times. Raise for 8-PAC-style
+        variance comparisons.
+    n_questions : int, default 1
+        Samples per round. Tiny smoke value; bump for real runs.
+    samples_start : int, default 0
+        Offset into the task dataset — useful for resumable runs.
+    generation : GenerationConfig | None
+        Sampling recipe. Defaults to Google's Gemma 4 calibration.
+    device_map : str, default 'auto'
+    dtype : str, default 'auto'
+    parallel : bool, default True
+        Use dual-GPU threading when >=2 CUDA devices are visible.
+    run_name : str | None
+        Output directory name under /kaggle/working or ./runs. Auto-generated
+        from the model sources if None.
+    """
+
+    def __init__(
+        self,
+        base: str,
+        test: str,
+        task: str = "mmlu_pro",
+        rounds: int = 1,
+        n_questions: int = 1,
+        samples_start: int = 0,
+        generation: Optional[GenerationConfig] = None,
+        device_map: str = "auto",
+        dtype: str = "auto",
+        parallel: bool = True,
+        run_name: Optional[str] = None,
+    ):
+        self.base_source = base
+        self.test_source = test
+        self.task = _expand_task(task)
+        self.rounds = rounds
+        self.n_questions = n_questions
+        self.samples_start = samples_start
+        self.generation = generation or GenerationConfig()
+        self.device_map = device_map
+        self.dtype = dtype
+        self.parallel = parallel
+        self.run_name = run_name or self._default_run_name(base, test)
+
+    @staticmethod
+    def _default_run_name(base: str, test: str) -> str:
+        """Human-readable default derived from the last path segment of each source."""
+
+        def tail(source: str) -> str:
+            return source.rstrip("/").split("/")[-1]
+
+        return f"gemma4-{tail(base)}-vs-{tail(test)}"
+
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
+    def run(self) -> Gemma4EvalResult:
+        """Resolve models, run lighteval rounds, return a Gemma4EvalResult."""
+
+        print(f"=== Gemma4Eval: {self.run_name} ===")
+        base_path = resolve_model_source(self.base_source, label="base")
+        test_path = resolve_model_source(self.test_source, label="test")
+
+        num_gpus = self._visible_gpu_count()
+        use_parallel = self.parallel and num_gpus >= 2
+        print(f"GPUs visible: {num_gpus}  parallel={use_parallel}")
+
+        result = Gemma4EvalResult(
+            run_name=self.run_name,
+            task=self.task,
+            base_source=self.base_source,
+            test_source=self.test_source,
+            rounds=self.rounds,
+            n_questions=self.n_questions,
+            samples_start=self.samples_start,
+            hardware_plan=(
+                "parallel: base on GPU 0, test on GPU 1"
+                if use_parallel
+                else (f"sequential: device_map={self.device_map}")
+            ),
+        )
+
+        for round_idx in range(1, self.rounds + 1):
+            if use_parallel:
+                with ThreadPoolExecutor(max_workers=2) as ex:
+                    fb = ex.submit(self._run_one, base_path, "base", round_idx, gpu_index=0)
+                    ft = ex.submit(self._run_one, test_path, "test", round_idx, gpu_index=1)
+                    result.base_detail_paths.append(fb.result())
+                    result.test_detail_paths.append(ft.result())
+            else:
+                result.base_detail_paths.append(
+                    self._run_one(base_path, "base", round_idx, gpu_index=0 if num_gpus else None)
+                )
+                result.test_detail_paths.append(
+                    self._run_one(test_path, "test", round_idx, gpu_index=0 if num_gpus else None)
+                )
+
+        # Locate the tracker's output dir via the side from the last round.
+        if result.base_detail_paths:
+            sample = Path(result.base_detail_paths[-1])
+            # details parquet lives at <out>/details/<task>/<run>.parquet — climb up
+            out_dir = sample
+            while out_dir.parent != out_dir and out_dir.name != "details":
+                out_dir = out_dir.parent
+            result.output_dir = out_dir.parent.parent  # strip 'details/<task>'
+
+        print(f"=== run complete — details under {result.output_dir} ===")
+        return result
+
+    def _run_one(
+        self,
+        model_path: str,
+        side: str,
+        round_idx: int,
+        gpu_index: Optional[int],
+    ) -> str:
+        """Evaluate a single model for one round. Returns the details parquet path."""
+
+        device_map = f"cuda:{gpu_index}" if gpu_index is not None else self.device_map
+        round_name = f"{self.run_name}/{side}_round{round_idx}"
+        tracker = KaggleEvaluationTracker(run_name=round_name)
+        out_dir = tracker.output_dir_path
+
+        # Wipe any leftover partial output from a prior run.
+        if out_dir.exists() and any(out_dir.iterdir()):
+            shutil.rmtree(out_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        params = PipelineParameters(
+            launcher_type=ParallelismManager.NONE,
+            max_samples=self.n_questions,
+            samples_start=self.samples_start,
+        )
+        model = Gemma4Model(
+            model_path=model_path,
+            device_map=device_map,
+            dtype=self.dtype,
+            generation=self.generation,
+        )
+
+        print(f"[{side}] round {round_idx}/{self.rounds}  device={device_map}")
+        pipeline = Pipeline(
+            tasks=self.task,
+            pipeline_parameters=params,
+            evaluation_tracker=tracker,
+            model=model,
+        )
+        pipeline.evaluate()
+        pipeline.save_and_push_results()
+
+        # Free the model before the next invocation.
+        del model, pipeline
+        self._reclaim_gpu_memory()
+
+        parquets = sorted(out_dir.glob("details/**/*.parquet"))
+        if not parquets:
+            raise RuntimeError(
+                f"[{side}] no details parquet produced in {out_dir} — "
+                f"check the lighteval output above for errors."
+            )
+        return str(parquets[0])
+
+    @staticmethod
+    def _visible_gpu_count() -> int:
+        try:
+            import torch  # type: ignore
+
+            return torch.cuda.device_count() if torch.cuda.is_available() else 0
+        except ImportError:
+            return 0
+
+    @staticmethod
+    def _reclaim_gpu_memory() -> None:
+        try:
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
