@@ -23,8 +23,9 @@ from typing import Any, List, Optional
 
 import torch
 
-from lighteval.models.abstract_model import LightevalModel
+from lighteval.models.abstract_model import LightevalModel, ModelConfig
 from lighteval.models.model_output import ModelResponse
+from lighteval.utils.cache_management import SampleCache
 
 
 @dataclass
@@ -107,6 +108,9 @@ class Gemma4Model(LightevalModel):
         )
         self.model.train(False)  # inference mode
         self.device = next(self.model.parameters()).device
+
+        self.config = ModelConfig(model_name=str(model_path))
+        self._cache = SampleCache(self.config)
 
     @classmethod
     def from_kagglehub(

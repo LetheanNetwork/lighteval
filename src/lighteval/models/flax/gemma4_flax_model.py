@@ -21,9 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from lighteval.models.abstract_model import LightevalModel
+from lighteval.models.abstract_model import LightevalModel, ModelConfig
 from lighteval.models.model_output import ModelResponse
 from lighteval.models.transformers.gemma4_model import GenerationConfig
+from lighteval.utils.cache_management import SampleCache
 
 
 class Gemma4FlaxModel(LightevalModel):
@@ -73,6 +74,9 @@ class Gemma4FlaxModel(LightevalModel):
             tokenizer=self._tokenizer,
             multi_turn=self._gen.multi_turn,
         )
+
+        self.config = ModelConfig(model_name=str(params_path))
+        self._cache = SampleCache(self.config)
 
     # ------------------------------------------------------------------
     # Construction helpers.
