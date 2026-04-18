@@ -37,7 +37,7 @@ class GenerationConfig:
     want enable_thinking=False so the model emits a direct answer.
     """
 
-    max_new_tokens: int = 4096
+    max_new_tokens: int = 512
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 64
@@ -174,8 +174,11 @@ class Gemma4Model(LightevalModel):
             responses.append(ModelResponse(text=[gen]))
 
             del inputs, out
-            if torch.cuda.is_available() and (i + 1) % 10 == 0:
-                torch.cuda.empty_cache()
+            if (i + 1) % 10 == 0:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
         return responses
 
     def loglikelihood(self, *args, **kwargs):
