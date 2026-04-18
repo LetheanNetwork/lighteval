@@ -147,8 +147,10 @@ class Gemma4Model(LightevalModel):
 
     # --- Inference entrypoint ---
     def greedy_until(self, docs, **kwargs) -> List[ModelResponse]:
+        from tqdm.auto import tqdm
+
         responses = []
-        for doc in docs:
+        for i, doc in enumerate(tqdm(docs, desc="Gemma4Model.greedy_until")):
             messages = [{"role": "user", "content": doc.query}]
             text = self.processor.apply_chat_template(
                 messages,
@@ -170,6 +172,10 @@ class Gemma4Model(LightevalModel):
                 )
             gen = self.processor.decode(out[0][input_len:], skip_special_tokens=True)
             responses.append(ModelResponse(text=[gen]))
+
+            del inputs, out
+            if torch.cuda.is_available() and (i + 1) % 10 == 0:
+                torch.cuda.empty_cache()
         return responses
 
     def loglikelihood(self, *args, **kwargs):
