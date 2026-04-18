@@ -72,7 +72,7 @@ dependencies = [
     "hf-xet>=1.1.8",  # pinned to avoid failing test suite
     # Prettiness
     "typer>=0.20.0",
-    "termcolor==2.3.0",
+    "termcolor>=2.3.0",  # Kaggle compat: base image ships termcolor 3.x; API is stable across majors
     "pytablewriter",
     "rich",
     "colorlog",
