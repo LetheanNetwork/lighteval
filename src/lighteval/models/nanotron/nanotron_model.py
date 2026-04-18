@@ -64,24 +64,27 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 TokenSequence = Union[List[int], torch.LongTensor, torch.Tensor, BatchEncoding]
 
 if is_package_available("nanotron"):
-    from nanotron import distributed as dist
-    from nanotron import logging
-    from nanotron.config import GeneralArgs, ModelArgs, TokenizerArgs
-    from nanotron.config.parallelism_config import ParallelismArgs
-    from nanotron.generation.decode import decode_tokenized
-    from nanotron.generation.sampler import SamplerType
-    from nanotron.logging import human_format, log_rank
-    from nanotron.models import build_model
-    from nanotron.parallel.context import ParallelContext
-    from nanotron.parallel.parameters import sanity_check
-    from nanotron.parallel.pipeline_parallel.block import get_min_max_rank
-    from nanotron.parallel.pipeline_parallel.tensor_pointer import TensorPointer
-    from nanotron.parallel.tensor_parallel.enum import TensorParallelLinearMode
-    from nanotron.random import RandomStates, get_current_random_state, get_synced_random_state, set_random_seed
-    from nanotron.serialize import load_weights
-    from nanotron.trainer import CONFIG_TO_MODEL_CLASS, mark_tied_parameters
+    try:
+        from nanotron import distributed as dist
+        from nanotron import logging
+        from nanotron.config import GeneralArgs, ModelArgs, TokenizerArgs
+        from nanotron.config.parallelism_config import ParallelismArgs
+        from nanotron.generation.decode import decode_tokenized
+        from nanotron.generation.sampler import SamplerType
+        from nanotron.logging import human_format, log_rank
+        from nanotron.models import build_model
+        from nanotron.parallel.context import ParallelContext
+        from nanotron.parallel.parameters import sanity_check
+        from nanotron.parallel.pipeline_parallel.block import get_min_max_rank
+        from nanotron.parallel.pipeline_parallel.tensor_pointer import TensorPointer
+        from nanotron.parallel.tensor_parallel.enum import TensorParallelLinearMode
+        from nanotron.random import RandomStates, get_current_random_state, get_synced_random_state, set_random_seed
+        from nanotron.serialize import load_weights
+        from nanotron.trainer import CONFIG_TO_MODEL_CLASS, mark_tied_parameters
 
-    logger = logging.get_logger(__name__)
+        logger = logging.get_logger(__name__)
+    except Exception:  # nanotron circular imports — pretend it isn't installed
+        pass
 
 DEFAULT_GENERATION_SEED = 42
 

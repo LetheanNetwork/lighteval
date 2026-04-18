@@ -55,10 +55,13 @@ else:
     Accelerator = InitProcessGroupKwargs = Mock()
 
 if is_package_available("nanotron"):
-    from nanotron import distributed as dist
-    from nanotron.parallel.context import ParallelContext
+    try:
+        from nanotron import distributed as dist
+        from nanotron.parallel.context import ParallelContext
 
-    from lighteval.models.nanotron.nanotron_model import NanotronLightevalModel
+        from lighteval.models.nanotron.nanotron_model import NanotronLightevalModel
+    except Exception:  # nanotron has its own circular imports in some releases
+        pass
 
 
 import logging
@@ -153,7 +156,7 @@ class Pipeline:
         self.evaluation_tracker.general_config_logger.log_model_info(model_config=self.model.config)
 
         # Final results
-        self.final_dict: dict | None = None
+        self.final_dict: dict
 
     def _init_parallelism_manager(self):
         accelerator, parallel_context = None, None
