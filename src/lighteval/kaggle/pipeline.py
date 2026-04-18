@@ -396,7 +396,9 @@ class Gemma4Eval:
         pipeline.evaluate()
         pipeline.save_and_push_results()
 
-        # Free the model before the next invocation.
+        # Free the model before the next invocation. Break the pipeline→model
+        # ref first so gc.collect() can actually release the weight tensors.
+        pipeline.model = None
         del model, pipeline
         self._reclaim_gpu_memory()
 
@@ -419,10 +421,14 @@ class Gemma4Eval:
 
     @staticmethod
     def _reclaim_gpu_memory() -> None:
+        import gc
+
+        gc.collect()
         try:
             import torch  # type: ignore
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
         except ImportError:
-            pass
+            return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
