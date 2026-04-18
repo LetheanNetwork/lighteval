@@ -30,11 +30,11 @@ def _extract_text(resp: Any) -> str:
 
 
 def _extract_answer(text: str) -> str:
-    m = re.search(r"Answer:\s*([A-Z])", text)
-    if m:
-        return m.group(1)
-    m = re.search(r"\b([A-J])\b", text)
-    return m.group(1) if m else "?"
+    matches = re.findall(r"Answer:\s*([A-Z])", text)
+    if matches:
+        return matches[-1]
+    matches = re.findall(r"\b([A-J])\b", text)
+    return matches[-1] if matches else "?"
 
 
 def _metric_hit(metric: Any) -> int:

@@ -14,7 +14,7 @@ from lighteval.utils.cache_management import SampleCache
 class GenerationConfig:
     """Sampling knobs for Gemma 4 — defaults match Google's calibrated recipe."""
 
-    max_new_tokens: int = 512
+    max_new_tokens: int = 1024
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 64

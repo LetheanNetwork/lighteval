@@ -116,7 +116,7 @@ def _render_question_slice(q: Dict[str, Any], preview_chars: int) -> str:
     question = escape(q["question"][:preview_chars])
     gold = escape(f"{q['gold_letter']}: {q['gold_text']}")
     return f'''
-    <section class="ge-question">
+    <section class="ge-question tex2jax_ignore mathjax_ignore">
       <div class="ge-question-head">
         <div class="ge-kicker">question slice {int(q["question_index"])}</div>
         <div class="ge-gold">gold answer: <b>{gold}</b></div>
