@@ -37,11 +37,11 @@ from .loader import resolve_model_source
 from .tracker import KaggleEvaluationTracker
 
 
-# Common lighteval task aliases, expanded into the full suite|name|few_shot|truncate form.
+# Task aliases — expanded to lighteval's current `task|few_shot` form.
 _TASK_ALIASES = {
-    "mmlu_pro": "lighteval|mmlu_pro|0|0",
-    "global_mmlu": "lighteval|global_mmlu_full_en|0|0",
-    "ifeval": "lighteval|ifeval|0|0",
+    "mmlu_pro": "mmlu_pro|0",
+    "global_mmlu": "global_mmlu_full_en|0",
+    "ifeval": "ifeval|0",
 }
 
 
