@@ -83,6 +83,40 @@ class Gemma4Model(LightevalModel):
         path = kagglehub.model_download(kagglehub_slug)
         return cls(model_path=path, **kwargs)
 
+    @classmethod
+    def from_preloaded(
+        cls,
+        model,
+        processor,
+        *,
+        name: Optional[str] = None,
+        generation: Optional[GenerationConfig] = None,
+    ) -> "Gemma4Model":
+        """Wrap an already-loaded model + processor pair as a Gemma4Model.
+
+        Use this when you want to control `from_pretrained` yourself (e.g.
+        matching Kaggle's official snippet verbatim) and hand the loaded
+        objects to Gemma4Eval.
+        """
+        instance = cls.__new__(cls)
+        instance.model_path = name or getattr(getattr(model, "config", None), "name_or_path", "preloaded")
+        instance._gen = generation or GenerationConfig()
+        instance.processor = processor
+
+        tok = getattr(processor, "tokenizer", processor)
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+        tok.padding_side = "left"
+        instance._tokenizer = tok
+
+        instance.model = model
+        instance.model.train(False)
+        instance.device = next(model.parameters()).device
+
+        instance.config = ModelConfig(model_name=str(instance.model_path))
+        instance._cache = SampleCache(instance.config)
+        return instance
+
     @property
     def tokenizer(self):
         return self._tokenizer

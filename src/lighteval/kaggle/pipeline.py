@@ -195,8 +195,8 @@ class Gemma4Eval:
 
     def __init__(
         self,
-        base: str,
-        test: str,
+        base,
+        test,
         task: str = "mmlu_pro",
         rounds: int = 1,
         n_questions: int = 1,
@@ -209,8 +209,10 @@ class Gemma4Eval:
         backend: str = "auto",
         research: bool = False,
     ):
-        self.base_source = base
-        self.test_source = test
+        self._base_arg = base
+        self._test_arg = test
+        self.base_source = self._source_label(base)
+        self.test_source = self._source_label(test)
         self.task = _expand_task(task)
         self.rounds = rounds
         self.n_questions = n_questions
@@ -219,9 +221,15 @@ class Gemma4Eval:
         self.device_map = device_map
         self.dtype = dtype
         self.parallel = parallel
-        self.run_name = run_name or self._default_run_name(base, test)
+        self.run_name = run_name or self._default_run_name(self.base_source, self.test_source)
         self.backend = self._resolve_backend(backend)
         self.research = research
+
+    @staticmethod
+    def _source_label(source) -> str:
+        if isinstance(source, str):
+            return source
+        return str(getattr(source, "model_path", type(source).__name__))
 
     @staticmethod
     def _resolve_backend(backend: str) -> str:
@@ -242,17 +250,26 @@ class Gemma4Eval:
         return "transformers"
 
     @staticmethod
-    def _default_run_name(base: str, test: str) -> str:
-        def tail(source: str) -> str:
-            return source.rstrip("/").split("/")[-1]
+    def _default_run_name(base, test) -> str:
+        def tail(source) -> str:
+            if isinstance(source, str):
+                return source.rstrip("/").split("/")[-1]
+            return getattr(source, "model_path", type(source).__name__).rstrip("/").split("/")[-1]
 
         return f"gemma4-{tail(base)}-vs-{tail(test)}"
+
+    @staticmethod
+    def _resolve_side(source, label: str):
+        """String → model path (via loader); pre-loaded instance → pass through."""
+        if isinstance(source, str):
+            return resolve_model_source(source, label=label)
+        return source
 
     def run(self) -> Gemma4EvalResult:
         """Resolve models, run all rounds, and return a populated Gemma4EvalResult."""
         print(f"=== Gemma4Eval: {self.run_name} ===")
-        base_path = resolve_model_source(self.base_source, label="base")
-        test_path = resolve_model_source(self.test_source, label="test")
+        base_path = self._resolve_side(self._base_arg, label="base")
+        test_path = self._resolve_side(self._test_arg, label="test")
 
         num_gpus = self._visible_gpu_count()
         use_parallel = self.parallel and num_gpus >= 2
@@ -305,11 +322,12 @@ class Gemma4Eval:
 
     def _run_one(
         self,
-        model_path: str,
+        model_or_path,
         side: str,
         round_idx: int,
         gpu_index: Optional[int],
     ) -> str:
+        preloaded = not isinstance(model_or_path, str)
         device_map = f"cuda:{gpu_index}" if gpu_index is not None else self.device_map
         round_name = f"{self.run_name}/{side}_round{round_idx}"
         tracker = KaggleEvaluationTracker(run_name=round_name)
@@ -324,9 +342,12 @@ class Gemma4Eval:
             max_samples=self.n_questions,
             samples_start=self.samples_start,
         )
-        model = self._build_model(model_path, device_map)
+        model = model_or_path if preloaded else self._build_model(model_or_path, device_map)
 
-        print(f"[{side}] round {round_idx}/{self.rounds}  backend={self.backend}  device={device_map}")
+        print(
+            f"[{side}] round {round_idx}/{self.rounds}  backend={self.backend}  "
+            f"device={device_map}  preloaded={preloaded}"
+        )
         pipeline = Pipeline(
             tasks=self.task,
             pipeline_parameters=params,
@@ -336,9 +357,10 @@ class Gemma4Eval:
         pipeline.evaluate()
         pipeline.save_and_push_results()
 
-        pipeline.model = None  # break the back-ref so gc can release weights
-        del model, pipeline
-        self._reclaim_gpu_memory()
+        if not preloaded:
+            pipeline.model = None  # break the back-ref so gc can release weights
+            del model, pipeline
+            self._reclaim_gpu_memory()
 
         parquets = sorted(out_dir.glob("details/**/*.parquet"))
         if not parquets:
