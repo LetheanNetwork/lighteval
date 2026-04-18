@@ -26,13 +26,30 @@ Typical notebook usage (5 cells, end-to-end):
     run.push_to_hub('my-user/gemma4-eval-results')
 """
 
+from lighteval.models.transformers import Gemma4Model, GenerationConfig
+
 from .loader import resolve_model_source
 from .tracker import KaggleEvaluationTracker
 from .pipeline import Gemma4Eval, Gemma4EvalResult
+from ..models.flax import Gemma4FlaxModel
+
+
+def __getattr__(name):
+    # Lazy-load Gemma4FlaxModel — only usable when the optional `gemma`
+    # library is installed. Importing eagerly would break environments
+    # that only want the transformers path.
+    if name == "Gemma4FlaxModel":
+        from lighteval.models.flax import Gemma4FlaxModel
+        return Gemma4FlaxModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Gemma4Eval",
     "Gemma4EvalResult",
+    "Gemma4Model",
+    "Gemma4FlaxModel",
+    "GenerationConfig",
     "KaggleEvaluationTracker",
     "resolve_model_source",
 ]
