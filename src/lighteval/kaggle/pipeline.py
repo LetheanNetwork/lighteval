@@ -229,7 +229,11 @@ class Gemma4Eval:
     def _source_label(source) -> str:
         if isinstance(source, str):
             return source
-        return str(getattr(source, "model_path", type(source).__name__))
+        if hasattr(source, "model_path"):
+            return str(source.model_path)
+        if callable(source):
+            return getattr(source, "__name__", "factory")
+        return type(source).__name__
 
     @staticmethod
     def _resolve_backend(backend: str) -> str:
@@ -260,7 +264,7 @@ class Gemma4Eval:
 
     @staticmethod
     def _resolve_side(source, label: str):
-        """String → model path (via loader); pre-loaded instance → pass through."""
+        """String → model path (via loader); instance or factory → pass through."""
         if isinstance(source, str):
             return resolve_model_source(source, label=label)
         return source
@@ -327,7 +331,8 @@ class Gemma4Eval:
         round_idx: int,
         gpu_index: Optional[int],
     ) -> str:
-        preloaded = not isinstance(model_or_path, str)
+        from lighteval.models.abstract_model import LightevalModel
+
         device_map = f"cuda:{gpu_index}" if gpu_index is not None else self.device_map
         round_name = f"{self.run_name}/{side}_round{round_idx}"
         tracker = KaggleEvaluationTracker(run_name=round_name)
@@ -342,11 +347,28 @@ class Gemma4Eval:
             max_samples=self.n_questions,
             samples_start=self.samples_start,
         )
-        model = model_or_path if preloaded else self._build_model(model_or_path, device_map)
+
+        if isinstance(model_or_path, str):
+            model = self._build_model(model_or_path, device_map)
+            source = "path"
+            we_own = True
+        elif isinstance(model_or_path, LightevalModel):
+            model = model_or_path
+            source = "preloaded"
+            we_own = False
+        elif callable(model_or_path):
+            model = model_or_path()
+            source = "factory"
+            we_own = True
+        else:
+            raise TypeError(
+                f"[{side}] expected a string, a LightevalModel instance, or a callable "
+                f"returning one — got {type(model_or_path).__name__}"
+            )
 
         print(
             f"[{side}] round {round_idx}/{self.rounds}  backend={self.backend}  "
-            f"device={device_map}  preloaded={preloaded}"
+            f"device={device_map}  source={source}"
         )
         pipeline = Pipeline(
             tasks=self.task,
@@ -357,7 +379,7 @@ class Gemma4Eval:
         pipeline.evaluate()
         pipeline.save_and_push_results()
 
-        if not preloaded:
+        if we_own:
             pipeline.model = None  # break the back-ref so gc can release weights
             del model, pipeline
             self._reclaim_gpu_memory()
