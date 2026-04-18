@@ -200,6 +200,7 @@ class Gemma4Eval:
         dtype: str = "auto",
         parallel: bool = True,
         run_name: Optional[str] = None,
+        backend: str = "auto",
     ):
         self.base_source = base
         self.test_source = test
@@ -212,6 +213,25 @@ class Gemma4Eval:
         self.dtype = dtype
         self.parallel = parallel
         self.run_name = run_name or self._default_run_name(base, test)
+        self.backend = self._resolve_backend(backend)
+
+    @staticmethod
+    def _resolve_backend(backend: str) -> str:
+        if backend not in ("auto", "transformers", "mlx"):
+            raise ValueError(f"backend must be one of 'auto', 'transformers', 'mlx' (got {backend!r})")
+        if backend != "auto":
+            return backend
+        try:
+            from lighteval.models.mlx.gemma4_mlx_model import is_apple_silicon
+        except ImportError:
+            return "transformers"
+        if is_apple_silicon():
+            try:
+                import mlx_lm  # noqa: F401
+            except ImportError:
+                return "transformers"
+            return "mlx"
+        return "transformers"
 
     @staticmethod
     def _default_run_name(base: str, test: str) -> str:
@@ -239,9 +259,9 @@ class Gemma4Eval:
             n_questions=self.n_questions,
             samples_start=self.samples_start,
             hardware_plan=(
-                "parallel: base on GPU 0, test on GPU 1"
+                f"parallel: base on GPU 0, test on GPU 1 ({self.backend})"
                 if use_parallel
-                else (f"sequential: device_map={self.device_map}")
+                else f"sequential: backend={self.backend}, device_map={self.device_map}"
             ),
         )
 
@@ -293,14 +313,9 @@ class Gemma4Eval:
             max_samples=self.n_questions,
             samples_start=self.samples_start,
         )
-        model = Gemma4Model(
-            model_path=model_path,
-            device_map=device_map,
-            dtype=self.dtype,
-            generation=self.generation,
-        )
+        model = self._build_model(model_path, device_map)
 
-        print(f"[{side}] round {round_idx}/{self.rounds}  device={device_map}")
+        print(f"[{side}] round {round_idx}/{self.rounds}  backend={self.backend}  device={device_map}")
         pipeline = Pipeline(
             tasks=self.task,
             pipeline_parameters=params,
@@ -321,6 +336,18 @@ class Gemma4Eval:
                 f"check the lighteval output above for errors."
             )
         return str(parquets[0])
+
+    def _build_model(self, model_path: str, device_map: str):
+        if self.backend == "mlx":
+            from lighteval.models.mlx import Gemma4MLXModel
+
+            return Gemma4MLXModel(model_path=model_path, generation=self.generation)
+        return Gemma4Model(
+            model_path=model_path,
+            device_map=device_map,
+            dtype=self.dtype,
+            generation=self.generation,
+        )
 
     @staticmethod
     def _visible_gpu_count() -> int:
@@ -344,3 +371,9 @@ class Gemma4Eval:
             torch.cuda.empty_cache()
         elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             torch.mps.empty_cache()
+            current = torch.mps.current_allocated_memory() / 1e9
+            driver = torch.mps.driver_allocated_memory() / 1e9
+            print(
+                f"[mps] tensors={current:.2f} GB · allocator reserved={driver:.2f} GB "
+                f"· gap={driver - current:.2f} GB (allocator cache, recoverable)"
+            )

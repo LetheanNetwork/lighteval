@@ -127,6 +127,7 @@ multilingual = [
     "pyvi", # for vietnamese tokenizer
 ]
 math = ["latex2sympy2_extended>=1.11"]
+mlx = ["mlx>=0.20", "mlx-lm>=0.20"]
 wandb = ["wandb"]
 trackio = ["trackio"]
 

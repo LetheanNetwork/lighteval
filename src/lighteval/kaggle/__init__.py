@@ -46,6 +46,7 @@ from .tracker import KaggleEvaluationTracker  # noqa: E402
 
 if TYPE_CHECKING:
     from lighteval.models.flax import Gemma4FlaxModel
+    from lighteval.models.mlx import Gemma4MLXModel
 
 
 def __getattr__(name):
@@ -53,6 +54,10 @@ def __getattr__(name):
         from lighteval.models.flax import Gemma4FlaxModel
 
         return Gemma4FlaxModel
+    if name == "Gemma4MLXModel":
+        from lighteval.models.mlx import Gemma4MLXModel
+
+        return Gemma4MLXModel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -61,6 +66,7 @@ __all__ = [
     "Gemma4EvalResult",
     "Gemma4Model",
     "Gemma4FlaxModel",
+    "Gemma4MLXModel",
     "GenerationConfig",
     "KaggleEvaluationTracker",
     "resolve_model_source",
