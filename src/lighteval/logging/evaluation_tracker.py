@@ -50,7 +50,12 @@ from lighteval.utils.utils import obj_to_markdown
 logger = logging.getLogger(__name__)
 
 if is_package_available("nanotron"):
-    from nanotron.config import GeneralArgs  # type: ignore
+    # nanotron has its own circular imports in some releases — don't let
+    # those break lighteval. The annotation below is a forward-ref string.
+    try:
+        from nanotron.config import GeneralArgs  # type: ignore
+    except Exception as err:
+        logger.debug(f"nanotron is installed but failed to import: {err}")
 
 try:
     from fsspec import url_to_fs
