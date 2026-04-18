@@ -33,6 +33,7 @@ from typing import Callable, Literal, Union
 import nltk
 import numpy as np
 from huggingface_hub import HfApi
+from huggingface_hub.errors import RepositoryNotFoundError
 from nltk.metrics.distance import edit_distance
 from nltk.tokenize import word_tokenize
 from nltk.tokenize.treebank import TreebankWordTokenizer
@@ -980,10 +981,10 @@ class JudgeLLM(SampleLevelComputation):
 
             case "transformers" | "vllm":
                 logger.debug("Checking availability of Transformers or VLLM model")
-                api = HfApi()
-                models = api.list_models(model_name=judge_model_name)
-                if not models:
-                    raise ValueError(f"{judge_model_name} not found on Hugging Face Hub")
+                try:
+                    HfApi().model_info(judge_model_name)
+                except RepositoryNotFoundError as err:
+                    raise ValueError(f"{judge_model_name} not found on Hugging Face Hub") from err
 
             case _:
                 raise ValueError(f"{judge_backend} is not a valid backend for llm as a judge metric")
