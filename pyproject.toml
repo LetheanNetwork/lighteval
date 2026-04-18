@@ -59,7 +59,7 @@ classifiers = [
 keywords = ["evaluation", "nlp", "llm"]
 dependencies = [
     # Base dependencies
-    "transformers>=4.54.0",
+    "transformers>=5.5.4",
     "inspect-ai>=0.3.140",
     "openai",
     "accelerate",
@@ -94,7 +94,6 @@ dependencies = [
     "pandas-stubs~=2.3.3",
     "pandas>=2.3.3",
     "tqdm>=4.67.3",
-    "nanotron>=0.4",
     "typing-extensions>=4.15.0",
     "pyyaml>=6.0.3",
     "requests>=2.33.1",
@@ -112,7 +111,7 @@ nanotron = [
   "tensorboardX"
 ]
 tensorboardX = ["tensorboardX"]
-vllm = ["vllm>=0.11.0", "ray", "more_itertools"]
+vllm = ["vllm>=0.19.1", "ray", "more_itertools"]
 sglang = ["sglang"]
 quality = ["ruff>=v0.11.0","pre-commit"]
 tests = ["pytest>=7.4.0","deepdiff","pip>=25.2"]
