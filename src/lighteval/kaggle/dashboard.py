@@ -45,6 +45,8 @@ def _build_markdown(
         "",
         f"Task `{result.task}` · slice `{n_questions} × {result.rounds}` · starts at `{samples_start}` · hardware `{hw_plan}`",
         "",
+        "> *Slice benchmark (paired A/B on the same questions). Percentages below are accuracy on this slice, not full-benchmark leaderboard scores — read the deltas, not the absolutes.*",
+        "",
         "## Scores",
         "",
         "| Side | Model | Per-round | Majority | Correct |",

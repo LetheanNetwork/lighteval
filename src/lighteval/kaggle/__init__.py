@@ -1,4 +1,5 @@
 import importlib.util
+import logging
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -17,7 +18,23 @@ def _ensure_notebook_deps() -> None:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
 
 
+def _suppress_expected_warnings() -> None:
+    # Gemma4Eval always sets max_samples — it's a paired A/B slice by design,
+    # not a benchmark submission — so the upstream "THESE NUMBERS ARE ONLY
+    # PARTIAL" warning is expected noise. The dashboard makes the slice scope
+    # explicit for anyone reading the output.
+    pipeline_logger = logging.getLogger("lighteval.pipeline")
+
+    class _MaxSamplesFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "max_samples WAS SET" not in record.getMessage()
+
+    if not any(isinstance(f, _MaxSamplesFilter) for f in pipeline_logger.filters):
+        pipeline_logger.addFilter(_MaxSamplesFilter())
+
+
 _ensure_notebook_deps()
+_suppress_expected_warnings()
 
 
 from lighteval.models.transformers import Gemma4Model, GenerationConfig  # noqa: E402
