@@ -49,7 +49,14 @@ if is_package_available("litellm"):
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM").handlers.clear()
 
-    litellm.cache = Cache(type=LiteLLMCacheType.DISK)
+    # Disk cache requires the optional `diskcache` package. Fall back to
+    # no cache if it's missing so importing lighteval still works —
+    # matters on stock Kaggle kernels where diskcache isn't preinstalled.
+    try:
+        litellm.cache = Cache(type=LiteLLMCacheType.DISK)
+    except (ModuleNotFoundError, ImportError):
+        logger.debug("diskcache not available; litellm disk cache disabled.")
+        litellm.cache = None
 else:
     from unittest.mock import Mock
 
