@@ -73,6 +73,12 @@ class Gemma4EvalResult:
 
         return _render(self, **kwargs)
 
+    def dump_research(self, *, include_responses: bool = True) -> Path:
+        """Write per-question prompt+response markdown under `<output_dir>/research`."""
+        from .research import dump as _dump
+
+        return _dump(self, include_responses=include_responses)
+
     def save_report(self) -> Path:
         """Write summary.csv, summary.json, report.md, and visual_report.html to the output directory."""
         import datetime as dt
@@ -201,6 +207,7 @@ class Gemma4Eval:
         parallel: bool = True,
         run_name: Optional[str] = None,
         backend: str = "auto",
+        research: bool = False,
     ):
         self.base_source = base
         self.test_source = test
@@ -214,6 +221,7 @@ class Gemma4Eval:
         self.parallel = parallel
         self.run_name = run_name or self._default_run_name(base, test)
         self.backend = self._resolve_backend(backend)
+        self.research = research
 
     @staticmethod
     def _resolve_backend(backend: str) -> str:
@@ -288,6 +296,9 @@ class Gemma4Eval:
             while out_dir.parent != out_dir and out_dir.name != "details":
                 out_dir = out_dir.parent
             result.output_dir = out_dir.parent.parent
+
+        if self.research:
+            result.dump_research()
 
         print(f"=== run complete — details under {result.output_dir} ===")
         return result
