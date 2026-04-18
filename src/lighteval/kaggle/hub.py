@@ -1,12 +1,5 @@
-# Push a Gemma4EvalResult to a HuggingFace Hub dataset repo.
-#
-# This is an optional publish step — Kaggle users can evaluate and inspect
-# results locally without ever touching this module. When they do want to
-# publish, one call uploads the run directory (parquets + summary.json +
-# report.md + visual_report.html) to an HF dataset repo.
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -19,29 +12,7 @@ def push_result(
     commit_message: Optional[str] = None,
     token: Optional[str] = None,
 ) -> str:
-    """Upload a Gemma4EvalResult's output directory to the HuggingFace Hub.
-
-    Creates the dataset repo if it doesn't exist, then uploads the entire
-    run directory (details parquets, summary.json, report.md, and the
-    visual_report.html if `result.save_report()` was called).
-
-    Parameters
-    ----------
-    result : Gemma4EvalResult
-        The outcome object from `Gemma4Eval().run()`.
-    repo_id : str
-        Target dataset repo, e.g. 'my-user/gemma4-eval-results'.
-    private : bool, default False
-        Create the repo as private. Ignored if the repo already exists.
-    commit_message : str, optional
-        Overrides the auto-generated commit message.
-    token : str, optional
-        HF Hub access token. Falls back to HF_TOKEN env var / `huggingface-cli login`.
-
-    Returns
-    -------
-    str : the URL of the uploaded folder.
-    """
+    """Upload a Gemma4EvalResult's output directory to the HuggingFace Hub."""
 
     from huggingface_hub import HfApi, create_repo
 
@@ -55,8 +26,6 @@ def push_result(
     if not output_dir.exists():
         raise FileNotFoundError(f"result.output_dir does not exist: {output_dir}")
 
-    # Ensure a summary.json + report.md exist in the output dir; call
-    # save_report() if they don't so the uploaded folder is self-describing.
     needs_save = not any(
         (output_dir / name).exists()
         for name in ("summary.json", "report.md")
@@ -66,7 +35,6 @@ def push_result(
 
     api = HfApi(token=token)
 
-    # Create the repo (no-op if it exists).
     create_repo(
         repo_id=repo_id,
         repo_type="dataset",

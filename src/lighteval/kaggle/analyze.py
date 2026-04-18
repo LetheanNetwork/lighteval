@@ -1,8 +1,3 @@
-# Parse lighteval `details` parquet files from a paired Gemma4Eval run
-# into (detail_df, question_summaries, totals).
-#
-# The result shape is the contract the dashboard + hub modules consume.
-# Lifted from the hackathon notebook so the library owns parsing.
 from __future__ import annotations
 
 import re
@@ -21,7 +16,6 @@ def _first_existing(paths: List[str]):
 
 
 def _extract_text(resp: Any) -> str:
-    """Pull a response string from lighteval's model_response cell."""
     try:
         text = resp["text"]
     except Exception:
@@ -36,7 +30,6 @@ def _extract_text(resp: Any) -> str:
 
 
 def _extract_answer(text: str) -> str:
-    """Best-effort A-J letter extraction from a free-form answer."""
     m = re.search(r"Answer:\s*([A-Z])", text)
     if m:
         return m.group(1)
@@ -65,17 +58,7 @@ def analyze_pair(
     task: str,
     samples_start: int = 0,
 ) -> Tuple[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]]:
-    """Parse paired details parquets into a comparison triple.
-
-    Returns
-    -------
-    detail_df : pandas.DataFrame
-        One row per (model_side, round, question) with hit/answer/text.
-    question_summaries : list[dict]
-        One entry per question with per-side answer lists, hits, majority.
-    totals : dict
-        Per-side summary (per-round accuracy, majority accuracy) and delta.
-    """
+    """Parse paired details parquets into (detail_df, question_summaries, totals)."""
 
     ref_path = _first_existing(base_paths + test_paths)
     if not ref_path:

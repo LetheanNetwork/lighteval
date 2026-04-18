@@ -49,9 +49,7 @@ if is_package_available("litellm"):
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM").handlers.clear()
 
-    # Disk cache requires the optional `diskcache` package. Fall back to
-    # no cache if it's missing so importing lighteval still works —
-    # matters on stock Kaggle kernels where diskcache isn't preinstalled.
+    # Disk cache needs the optional `diskcache` package; skip silently if absent.
     try:
         litellm.cache = Cache(type=LiteLLMCacheType.DISK)
     except (ModuleNotFoundError, ImportError):

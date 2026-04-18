@@ -1,15 +1,3 @@
-# Render the Gemma 4 comparison dashboard.
-#
-# Produces an HTML + plotly dashboard suitable for Jupyter / Kaggle
-# notebooks. The dashboard walks a reader through one evaluation slice
-# from prompt window -> rounds -> extracted answers -> majority vote ->
-# delta, using colour-coded cards and a heatmap.
-#
-# Called via Gemma4EvalResult.dashboard(). Can also be called directly
-# with a Gemma4EvalResult instance:
-#
-#     from lighteval.kaggle.dashboard import render
-#     html = render(result)
 from __future__ import annotations
 
 from collections import Counter
@@ -31,11 +19,7 @@ PLOT_COLORS = {
 }
 
 
-# ----------------------------------------------------------------------
-# Small presentation helpers.
-# ----------------------------------------------------------------------
 def _pretty_model_name(model_path: str) -> str:
-    """Try to surface a readable model name from a filesystem path."""
     parts = Path(str(model_path)).parts
     if "transformers" in parts:
         idx = parts.index("transformers")
@@ -53,9 +37,6 @@ def _clamp_pct(value: Any) -> float:
         return 0.0
 
 
-# ----------------------------------------------------------------------
-# HTML building blocks.
-# ----------------------------------------------------------------------
 def _score_card(side: str, data: Dict[str, Any]) -> str:
     name = _pretty_model_name(data["model"])
     per_round = _clamp_pct(data["per_round_accuracy_pct"])
@@ -148,11 +129,8 @@ def _render_question_slice(q: Dict[str, Any], preview_chars: int) -> str:
     </section>'''
 
 
-# ----------------------------------------------------------------------
-# Plotly helpers.
-# ----------------------------------------------------------------------
 def _build_score_figure(totals: Dict[str, Any]):
-    import plotly.express as px  # lazy import; plotly is optional
+    import plotly.express as px
 
     score_df = pd.DataFrame(
         [
@@ -252,9 +230,6 @@ def _build_hit_heatmap(detail_df: pd.DataFrame):
     return fig
 
 
-# ----------------------------------------------------------------------
-# Public entrypoint.
-# ----------------------------------------------------------------------
 _DASHBOARD_CSS = """
 <style>
   .ge-wrap { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18212f; }
@@ -312,26 +287,7 @@ def render(
     show_plotly: bool = True,
     display_inline: bool = True,
 ) -> str:
-    """Render the Gemma 4 comparison dashboard for a Gemma4EvalResult.
-
-    Parameters
-    ----------
-    result : Gemma4EvalResult
-        The outcome object returned by `Gemma4Eval().run()`.
-    max_questions : int, default 8
-        Cap question slices shown inline to keep the dashboard readable.
-    preview_chars : int, default 420
-        Max chars of each question body to show inline.
-    show_plotly : bool, default True
-        If True, render the score bar chart + hit heatmap.
-    display_inline : bool, default True
-        If True, call IPython.display.HTML — suitable for notebooks. Set
-        False if you just want the HTML string (e.g. to write to file).
-
-    Returns
-    -------
-    str : the dashboard HTML (caller can save to disk if desired).
-    """
+    """Render the comparison dashboard for a Gemma4EvalResult and return its HTML."""
 
     detail_df, question_summaries, totals = result.analyze()
 
@@ -339,7 +295,6 @@ def render(
     run_name = escape(str(result.run_name))
     task = escape(str(result.task))
     rounds = int(result.rounds)
-    # n_questions is the per-round sample count from Gemma4Eval
     n_questions = getattr(result, "n_questions", len(question_summaries))
     samples_start = getattr(result, "samples_start", 0)
 
@@ -392,7 +347,6 @@ def render(
             heat_fig = _build_hit_heatmap(detail_df)
             figures = [fig for fig in (score_fig, heat_fig) if fig is not None]
         except ImportError:
-            # plotly not installed — dashboard HTML still renders
             figures = []
 
     if display_inline:
@@ -408,7 +362,6 @@ def render(
     for idx, fig in enumerate(figures):
         plotly_html_sections.append(fig.to_html(full_html=False, include_plotlyjs=(idx == 0)))
 
-    # Stash the plotly HTML on the result so save_report can embed it.
     try:
         setattr(result, "_dashboard_plotly_html", plotly_html_sections)
         setattr(result, "_dashboard_html", html)

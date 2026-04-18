@@ -1,22 +1,6 @@
-# Gemma4Eval — the Kaggle-notebook-user API.
-#
-# Wraps lighteval.pipeline.Pipeline with the orchestration a Kaggle user
-# expects out of the box: KaggleHub-resolved models, dual-GPU paired runs
-# on T4 x2, results persisted as parquets under /kaggle/working, and a
-# Gemma4EvalResult object ready for .dashboard() / .push_to_hub().
-#
-# Usage:
-#     from lighteval.kaggle import Gemma4Eval
-#     run = Gemma4Eval(
-#         base='google/gemma-4/transformers/gemma-4-e2b-it',
-#         test='my-user/my-gemma4-finetune',
-#         task='mmlu_pro',
-#         rounds=8,
-#     ).run()
-#     run.dashboard()
-#     run.push_to_hub('my-user/gemma4-eval-results')  # optional
 from __future__ import annotations
 
+import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -37,7 +21,6 @@ from .loader import resolve_model_source
 from .tracker import KaggleEvaluationTracker
 
 
-# Task aliases — expanded to lighteval's current `task|few_shot` form.
 _TASK_ALIASES = {
     "mmlu_pro": "mmlu_pro|0",
     "global_mmlu": "global_mmlu_full_en|0",
@@ -46,7 +29,6 @@ _TASK_ALIASES = {
 
 
 def _expand_task(task: str) -> str:
-    """Resolve a Kaggle-friendly alias to a full lighteval task spec."""
     if "|" in task:
         return task
     return _TASK_ALIASES.get(task, task)
@@ -54,9 +36,6 @@ def _expand_task(task: str) -> str:
 
 @dataclass
 class Gemma4EvalResult:
-    """Outcome of a Gemma4Eval.run(). Holds paths to the details parquets
-    plus metadata, and exposes analyze / dashboard / save / push helpers."""
-
     run_name: str
     task: str
     base_source: str
@@ -69,18 +48,10 @@ class Gemma4EvalResult:
     test_detail_paths: List[str] = field(default_factory=list)
     output_dir: Optional[Path] = None
 
-    # Cached parse outputs (populated by .analyze()).
     _analysis: Optional[tuple] = field(default=None, repr=False)
 
-    # ------------------------------------------------------------------
-    # Parse.
-    # ------------------------------------------------------------------
     def analyze(self):
-        """Parse the paired details parquets into (detail_df, question_summaries, totals).
-
-        Results are cached so subsequent calls (e.g. dashboard + save_report)
-        don't re-read the parquets.
-        """
+        """Parse the paired details parquets into (detail_df, question_summaries, totals)."""
         if self._analysis is not None:
             return self._analysis
         from .analyze import analyze_pair
@@ -96,25 +67,14 @@ class Gemma4EvalResult:
         )
         return self._analysis
 
-    # ------------------------------------------------------------------
-    # Dashboard.
-    # ------------------------------------------------------------------
     def dashboard(self, **kwargs) -> str:
-        """Render the comparison dashboard inline and return the HTML.
-
-        Delegates to lighteval.kaggle.dashboard.render. Accepts keyword
-        overrides (max_questions, preview_chars, show_plotly, display_inline).
-        """
+        """Render the comparison dashboard inline and return the HTML."""
         from .dashboard import render as _render
 
         return _render(self, **kwargs)
 
-    # ------------------------------------------------------------------
-    # Persist.
-    # ------------------------------------------------------------------
     def save_report(self) -> Path:
-        """Write summary.csv / summary.json / report.md / visual_report.html
-        to the output directory. Returns the output directory path."""
+        """Write summary.csv, summary.json, report.md, and visual_report.html to the output directory."""
         import datetime as dt
 
         import pandas as pd
@@ -209,9 +169,6 @@ class Gemma4EvalResult:
         print(f"Saved report under {out}")
         return out
 
-    # ------------------------------------------------------------------
-    # Publish.
-    # ------------------------------------------------------------------
     def push_to_hub(
         self,
         repo_id: str,
@@ -220,11 +177,7 @@ class Gemma4EvalResult:
         commit_message: Optional[str] = None,
         token: Optional[str] = None,
     ) -> str:
-        """Upload the run directory to a HuggingFace Hub dataset repo.
-
-        Calls save_report() first if no summary.json exists yet, so the
-        uploaded folder is always self-describing.
-        """
+        """Upload the run directory to a HuggingFace Hub dataset repo."""
         from .hub import push_result as _push
 
         return _push(
@@ -237,32 +190,7 @@ class Gemma4EvalResult:
 
 
 class Gemma4Eval:
-    """Paired Gemma 4 evaluation across base and test models.
-
-    Parameters
-    ----------
-    base, test : str
-        Model sources. Each may be a KaggleHub slug, HF Hub repo id, or
-        local path — `resolve_model_source` figures out which.
-    task : str, default 'mmlu_pro'
-        Task alias or full lighteval task spec.
-    rounds : int, default 1
-        Sample each question this many times. Raise for 8-PAC-style
-        variance comparisons.
-    n_questions : int, default 1
-        Samples per round. Tiny smoke value; bump for real runs.
-    samples_start : int, default 0
-        Offset into the task dataset — useful for resumable runs.
-    generation : GenerationConfig | None
-        Sampling recipe. Defaults to Google's Gemma 4 calibration.
-    device_map : str, default 'auto'
-    dtype : str, default 'auto'
-    parallel : bool, default True
-        Use dual-GPU threading when >=2 CUDA devices are visible.
-    run_name : str | None
-        Output directory name under /kaggle/working or ./runs. Auto-generated
-        from the model sources if None.
-    """
+    """Paired evaluation of two Gemma 4 models over the same task and sampling recipe."""
 
     def __init__(
         self,
@@ -292,19 +220,13 @@ class Gemma4Eval:
 
     @staticmethod
     def _default_run_name(base: str, test: str) -> str:
-        """Human-readable default derived from the last path segment of each source."""
-
         def tail(source: str) -> str:
             return source.rstrip("/").split("/")[-1]
 
         return f"gemma4-{tail(base)}-vs-{tail(test)}"
 
-    # ------------------------------------------------------------------
-    # Orchestration
-    # ------------------------------------------------------------------
     def run(self) -> Gemma4EvalResult:
-        """Resolve models, run lighteval rounds, return a Gemma4EvalResult."""
-
+        """Resolve models, run all rounds, and return a populated Gemma4EvalResult."""
         print(f"=== Gemma4Eval: {self.run_name} ===")
         base_path = resolve_model_source(self.base_source, label="base")
         test_path = resolve_model_source(self.test_source, label="test")
@@ -350,7 +272,7 @@ class Gemma4Eval:
             out_dir = sample
             while out_dir.parent != out_dir and out_dir.name != "details":
                 out_dir = out_dir.parent
-            result.output_dir = out_dir.parent.parent  # strip 'details/<task>'
+            result.output_dir = out_dir.parent.parent
 
         print(f"=== run complete — details under {result.output_dir} ===")
         return result
@@ -362,14 +284,11 @@ class Gemma4Eval:
         round_idx: int,
         gpu_index: Optional[int],
     ) -> str:
-        """Evaluate a single model for one round. Returns the details parquet path."""
-
         device_map = f"cuda:{gpu_index}" if gpu_index is not None else self.device_map
         round_name = f"{self.run_name}/{side}_round{round_idx}"
         tracker = KaggleEvaluationTracker(run_name=round_name)
         out_dir = tracker.output_dir_path
 
-        # Wipe any leftover partial output from a prior run.
         if out_dir.exists() and any(out_dir.iterdir()):
             shutil.rmtree(out_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -396,9 +315,7 @@ class Gemma4Eval:
         pipeline.evaluate()
         pipeline.save_and_push_results()
 
-        # Free the model before the next invocation. Break the pipeline→model
-        # ref first so gc.collect() can actually release the weight tensors.
-        pipeline.model = None
+        pipeline.model = None  # break the back-ref so gc can release weights
         del model, pipeline
         self._reclaim_gpu_memory()
 

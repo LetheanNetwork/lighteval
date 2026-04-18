@@ -1,12 +1,3 @@
-# Kaggle-sane EvaluationTracker — defaults that match how notebook users run.
-#
-# The stock EvaluationTracker requires several decisions (push to hub? push
-# to tensorboard? which results path template?) that Kaggle users usually
-# don't need up-front. This wrapper fixes sane defaults:
-#   - output_dir under /kaggle/working when available
-#   - save_details=True (the Kaggle run should always produce inspectable parquets)
-#   - push_to_hub=False by default (user opts in via Gemma4EvalResult.push_to_hub)
-#   - no tensorboard/wandb/nanotron cruft
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,11 +7,7 @@ from lighteval.logging.evaluation_tracker import EvaluationTracker
 
 
 def default_output_root() -> Path:
-    """Where results should live by default.
-
-    On Kaggle this is `/kaggle/working`. Elsewhere we default to a
-    `./runs` directory next to the notebook.
-    """
+    """Return `/kaggle/working` when present, otherwise `./runs`."""
     kaggle_root = Path("/kaggle/working")
     if kaggle_root.exists():
         return kaggle_root
@@ -28,16 +15,11 @@ def default_output_root() -> Path:
 
 
 class KaggleEvaluationTracker(EvaluationTracker):
-    """EvaluationTracker with Kaggle-friendly defaults.
+    """EvaluationTracker pre-configured for notebook runs.
 
-    Parameters
-    ----------
-    run_name : str
-        Used to form the output directory ({root}/{run_name}).
-    output_root : Path | None
-        Override the root. Defaults to `/kaggle/working` or `./runs`.
-    save_details : bool, default True
-        Persist per-question parquet details — required for the dashboard.
+    Writes to `{output_root}/{run_name}` (defaulting to `/kaggle/working`
+    or `./runs`) with details parquets enabled and hub/tensorboard/wandb
+    side-channels disabled.
     """
 
     def __init__(

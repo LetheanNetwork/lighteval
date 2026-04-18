@@ -1,25 +1,7 @@
-# Copyright 2025 LetheanNetwork
-# Licensed under the MIT License (see LICENSE)
-#
-# Gemma 4 support for lighteval's transformers backend.
-#
-# This module provides Gemma4Model, a LightevalModel subclass tuned for
-# Google's Gemma 4 multimodal checkpoints. It uses AutoProcessor (the
-# Gemma-4-correct loader) instead of AutoTokenizer, and handles the
-# Gemma 4 chat template (including the "thinking" mode toggle) natively.
-#
-# Typical usage from a notebook:
-#
-#     from lighteval.models.transformers import Gemma4Model, GenerationConfig
-#     model = Gemma4Model('/kaggle/input/.../gemma-4-e2b-it/1')
-#     # pass to Pipeline(..., model=model) or use via lighteval.kaggle.Gemma4Eval
-#
-# Kaggle users: see lighteval.kaggle.Gemma4Eval for the notebook-first API
-# that handles KaggleHub model paths, dual-GPU paired runs, and the dashboard.
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 import torch
 
@@ -30,23 +12,17 @@ from lighteval.utils.cache_management import SampleCache
 
 @dataclass
 class GenerationConfig:
-    """Sampling and generation knobs for Gemma 4.
-
-    Defaults track Google's calibrated Gemma 4 sampling recipe
-    (temperature=1.0, top_p=0.95, top_k=64). MCQ-style evals typically
-    want enable_thinking=False so the model emits a direct answer.
-    """
+    """Sampling knobs for Gemma 4 — defaults match Google's calibrated recipe."""
 
     max_new_tokens: int = 512
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 64
     enable_thinking: bool = False
-    multi_turn: bool = False  # used by the Flax ChatSampler sibling
+    multi_turn: bool = False
 
 
 def _pick_dtype(dtype: str = "auto"):
-    """Resolve a torch dtype. 'auto' = bf16 on Ampere+, fp16 on T4/V100, fp32 on CPU."""
     if dtype != "auto":
         return getattr(torch, dtype)
     if not torch.cuda.is_available():
@@ -56,31 +32,10 @@ def _pick_dtype(dtype: str = "auto"):
 
 
 class Gemma4Model(LightevalModel):
-    """LightevalModel wrapping a Gemma 4 checkpoint via transformers.
+    """LightevalModel wrapping a Gemma 4 checkpoint loaded via `transformers`.
 
-    Uses AutoProcessor (not AutoTokenizer) — this is the loader Google's
-    Kaggle examples use and the one that correctly understands Gemma 4's
-    multimodal chat template. We only exercise the text path here; the
-    processor's tokenizer satisfies lighteval's abstract interface.
-
-    Parameters
-    ----------
-    model_path : str
-        Local directory or HuggingFace Hub repo id for a Gemma 4 checkpoint.
-    device_map : str, default 'auto'
-        Passed to AutoModelForCausalLM.from_pretrained.
-    dtype : str, default 'auto'
-        'auto' picks bf16 on Ampere+, fp16 on T4/V100, fp32 on CPU. Or pass
-        an explicit dtype name: 'bfloat16', 'float16', 'float32'.
-    generation : GenerationConfig | None
-        Sampling config. If None, Gemma 4 calibrated defaults are used.
-
-    Example
-    -------
-    >>> model = Gemma4Model('/kaggle/input/.../gemma-4-e2b-it/1')
-    >>> model.max_length
-    131072
-    >>> # Pass into lighteval.pipeline.Pipeline(..., model=model)
+    Uses AutoProcessor rather than AutoTokenizer so the Gemma 4 chat template
+    and its optional thinking-mode toggle are applied correctly.
     """
 
     def __init__(
@@ -106,7 +61,7 @@ class Gemma4Model(LightevalModel):
             dtype=_pick_dtype(dtype),
             device_map=device_map,
         )
-        self.model.train(False)  # inference mode
+        self.model.train(False)
         self.device = next(self.model.parameters()).device
 
         self.config = ModelConfig(model_name=str(model_path))
@@ -118,20 +73,12 @@ class Gemma4Model(LightevalModel):
         kagglehub_slug: str,
         **kwargs,
     ) -> "Gemma4Model":
-        """Construct a Gemma4Model from a KaggleHub model slug.
-
-        Example
-        -------
-        >>> model = Gemma4Model.from_kagglehub(
-        ...     'google/gemma-4/transformers/gemma-4-e2b-it'
-        ... )
-        """
+        """Download a checkpoint from KaggleHub and instantiate a Gemma4Model."""
         import kagglehub  # type: ignore
 
         path = kagglehub.model_download(kagglehub_slug)
         return cls(model_path=path, **kwargs)
 
-    # --- Abstract properties required by LightevalModel ---
     @property
     def tokenizer(self):
         return self.processor.tokenizer
@@ -142,10 +89,8 @@ class Gemma4Model(LightevalModel):
 
     @property
     def add_special_tokens(self) -> bool:
-        # The chat template adds them; lighteval's tok_encode must not double-add.
         return False
 
-    # --- Inference entrypoint ---
     def greedy_until(self, docs, **kwargs) -> List[ModelResponse]:
         from tqdm.auto import tqdm
 
@@ -183,15 +128,12 @@ class Gemma4Model(LightevalModel):
 
     def loglikelihood(self, *args, **kwargs):
         raise NotImplementedError(
-            "Gemma4Model does not implement loglikelihood. "
-            "Pick a task that uses greedy_until (MMLU-Pro, IFEval, etc.) "
-            "or subclass Gemma4Model and add loglikelihood support."
+            "Gemma4Model does not implement loglikelihood — "
+            "pick a task that uses greedy_until (MMLU-Pro, IFEval, etc.)."
         )
 
     def loglikelihood_rolling(self, *args, **kwargs):
-        raise NotImplementedError(
-            "Gemma4Model does not implement loglikelihood_rolling."
-        )
+        raise NotImplementedError("Gemma4Model does not implement loglikelihood_rolling.")
 
     def __repr__(self) -> str:
         return (

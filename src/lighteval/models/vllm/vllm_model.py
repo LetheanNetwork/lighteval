@@ -62,8 +62,7 @@ if is_package_available("vllm"):
     from vllm.v1.engine.async_llm import AsyncEngineArgs, AsyncLLM
 
     try:
-        # vLLM moved `get_tokenizer` to `vllm.tokenizers` in v0.12.0.
-        # Keep the fallback while our lower bound remains on v0.11.x.
+        # `get_tokenizer` moved to `vllm.tokenizers` in v0.12.0.
         from vllm.tokenizers import get_tokenizer
     except ModuleNotFoundError:
         from vllm.transformers_utils.tokenizer import get_tokenizer
