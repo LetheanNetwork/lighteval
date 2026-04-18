@@ -18,6 +18,29 @@ def _ensure_notebook_deps() -> None:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
 
 
+def _ensure_transformers_gemma4() -> None:
+    # Kaggle's base image can satisfy `transformers>=4.54` without actually
+    # shipping the Gemma 4 architecture (the gemma4 model_type landed in a
+    # later minor). Detect the gap by inspecting CONFIG_MAPPING_NAMES and
+    # force an upgrade if needed. Module eviction lets the next import pick
+    # up the new version when transformers hasn't been imported yet.
+    try:
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+    except ImportError:
+        return
+    if "gemma4" in CONFIG_MAPPING_NAMES:
+        return
+
+    print("[lighteval.kaggle] transformers lacks gemma4 support — upgrading")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-q", "-U", "transformers", "accelerate"]
+    )
+
+    for name in list(sys.modules):
+        if name == "transformers" or name.startswith("transformers."):
+            del sys.modules[name]
+
+
 def _suppress_expected_warnings() -> None:
     # Gemma4Eval always sets max_samples — it's a paired A/B slice by design,
     # not a benchmark submission — so the upstream "THESE NUMBERS ARE ONLY
@@ -34,6 +57,7 @@ def _suppress_expected_warnings() -> None:
 
 
 _ensure_notebook_deps()
+_ensure_transformers_gemma4()
 _suppress_expected_warnings()
 
 
