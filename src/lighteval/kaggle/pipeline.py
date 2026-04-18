@@ -152,19 +152,14 @@ class Gemma4EvalResult:
             lines.append("")
         (out / "report.md").write_text("\n".join(lines))
 
-        # If the dashboard was rendered previously, write a combined HTML
-        # report — safe no-op otherwise.
-        html_body = getattr(self, "_dashboard_html", "")
         plotly_sections = getattr(self, "_dashboard_plotly_html", [])
-        if html_body:
-            doc = (
+        if plotly_sections:
+            (out / "plotly_report.html").write_text(
                 "<!doctype html><html><head><meta charset=\"utf-8\">"
-                "<title>Gemma 4 Eval Visual Report</title></head><body>"
-                + html_body
+                "<title>Gemma 4 Eval Plots</title></head><body>"
                 + "".join(plotly_sections)
                 + "</body></html>"
             )
-            (out / "visual_report.html").write_text(doc)
 
         print(f"Saved report under {out}")
         return out
