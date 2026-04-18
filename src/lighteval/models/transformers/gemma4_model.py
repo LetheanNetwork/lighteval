@@ -51,10 +51,14 @@ class Gemma4Model(LightevalModel):
         self._gen = generation or GenerationConfig()
 
         self.processor = AutoProcessor.from_pretrained(model_path)
-        tok = self.processor.tokenizer
+        # AutoProcessor returns either a full Gemma4Processor (which wraps a
+        # tokenizer) or — when processor_config files aren't present in the
+        # checkpoint — the bare tokenizer itself. Handle both.
+        tok = getattr(self.processor, "tokenizer", self.processor)
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
         tok.padding_side = "left"
+        self._tokenizer = tok
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
@@ -81,7 +85,7 @@ class Gemma4Model(LightevalModel):
 
     @property
     def tokenizer(self):
-        return self.processor.tokenizer
+        return self._tokenizer
 
     @property
     def max_length(self) -> int:
