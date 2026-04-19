@@ -332,9 +332,13 @@ class Gemma4Eval:
         round_idx: int,
         gpu_index: Optional[int],
     ) -> str:
+        import inspect
+
         from lighteval.models.abstract_model import LightevalModel
+        from lighteval.models.transformers.gemma4_model import _pick_device
 
         device_map = f"cuda:{gpu_index}" if gpu_index is not None else self.device_map
+        concrete_device = _pick_device(device_map)
         round_name = f"{self.run_name}/{side}_round{round_idx}"
         tracker = KaggleEvaluationTracker(run_name=round_name)
         out_dir = tracker.output_dir_path
@@ -358,7 +362,12 @@ class Gemma4Eval:
             source = "preloaded"
             we_own = False
         elif callable(model_or_path):
-            model = model_or_path()
+            sig = inspect.signature(model_or_path)
+            accepts_kwargs = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+            if "device" in sig.parameters or accepts_kwargs:
+                model = model_or_path(device=concrete_device)
+            else:
+                model = model_or_path()
             source = "factory"
             we_own = True
         else:
@@ -369,7 +378,7 @@ class Gemma4Eval:
 
         print(
             f"[{side}] round {round_idx}/{self.rounds}  backend={self.backend}  "
-            f"device={device_map}  source={source}"
+            f"device={concrete_device}  source={source}"
         )
         pipeline = Pipeline(
             tasks=self.task,
