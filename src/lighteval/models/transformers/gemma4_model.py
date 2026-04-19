@@ -25,10 +25,23 @@ class GenerationConfig:
 def _pick_dtype(dtype: str = "auto"):
     if dtype != "auto":
         return getattr(torch, dtype)
-    if not torch.cuda.is_available():
-        return torch.float32
-    major, _ = torch.cuda.get_device_capability(0)
-    return torch.bfloat16 if major >= 8 else torch.float16
+    if torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability(0)
+        return torch.bfloat16 if major >= 8 else torch.float16
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.bfloat16
+    return torch.float32
+
+
+def _pick_device(device_map: str = "auto") -> str:
+    """Resolve 'auto' to a concrete device. Explicit strings pass through."""
+    if device_map != "auto":
+        return device_map
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class Gemma4Model(LightevalModel):
@@ -60,13 +73,14 @@ class Gemma4Model(LightevalModel):
         tok.padding_side = "left"
         self._tokenizer = tok
 
+        device = _pick_device(device_map)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             dtype=_pick_dtype(dtype),
-            device_map=device_map,
-        )
+        ).to(device)
         self.model.train(False)
         self.device = next(self.model.parameters()).device
+        print(f"[Gemma4Model] {model_path} loaded on {self.device}")
 
         self.config = ModelConfig(model_name=str(model_path))
         self._cache = SampleCache(self.config)
