@@ -276,8 +276,9 @@ class Gemma4Eval:
         test_path = self._resolve_side(self._test_arg, label="test")
 
         num_gpus = self._visible_gpu_count()
+        devices = self._list_devices(num_gpus)
         use_parallel = self.parallel and num_gpus >= 2
-        print(f"GPUs visible: {num_gpus}  parallel={use_parallel}")
+        print(f"Devices: {devices}  parallel={use_parallel}")
 
         result = Gemma4EvalResult(
             run_name=self.run_name,
@@ -412,6 +413,19 @@ class Gemma4Eval:
             return torch.cuda.device_count() if torch.cuda.is_available() else 0
         except ImportError:
             return 0
+
+    @staticmethod
+    def _list_devices(num_gpus: int) -> List[str]:
+        if num_gpus > 0:
+            return [f"cuda:{i}" for i in range(num_gpus)]
+        try:
+            import torch  # type: ignore
+
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                return ["mps"]
+        except ImportError:
+            pass
+        return ["cpu"]
 
     @staticmethod
     def _reclaim_gpu_memory() -> None:
