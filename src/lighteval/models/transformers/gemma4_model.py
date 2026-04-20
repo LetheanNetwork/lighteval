@@ -77,7 +77,11 @@ class Gemma4Model(LightevalModel):
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             dtype=_pick_dtype(dtype),
-        ).to(device)
+            device_map=device_map if device_map == "auto" else None,
+        )
+        if device_map != "auto":
+            self.model.to(device)
+
         self.model.train(False)
         self.device = next(self.model.parameters()).device
         print(f"[Gemma4Model] {model_path} loaded on {self.device}")
@@ -149,13 +153,23 @@ class Gemma4Model(LightevalModel):
         responses = []
         for i, doc in enumerate(tqdm(docs, desc="Gemma4Model.greedy_until")):
             messages = [{"role": "user", "content": doc.query}]
-            text = self.processor.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=self._gen.enable_thinking,
-            )
-            inputs = self.processor(text=text, return_tensors="pt").to(self.device)
+            
+            # Use processor if available (from AutoProcessor), else fall back to tokenizer
+            if hasattr(self.processor, "apply_chat_template"):
+                text = self.processor.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                inputs = self.processor(text=text, return_tensors="pt").to(self.device)
+            else:
+                text = self._tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                inputs = self._tokenizer(text, return_tensors="pt").to(self.device)
+                
             input_len = inputs["input_ids"].shape[-1]
             with torch.inference_mode():
                 out = self.model.generate(
@@ -165,9 +179,14 @@ class Gemma4Model(LightevalModel):
                     temperature=self._gen.temperature,
                     top_p=self._gen.top_p,
                     top_k=self._gen.top_k,
-                    pad_token_id=self.processor.tokenizer.eos_token_id,
+                    pad_token_id=self._tokenizer.eos_token_id,
                 )
-            gen = self.processor.decode(out[0][input_len:], skip_special_tokens=True)
+            
+            if hasattr(self.processor, "decode"):
+                gen = self.processor.decode(out[0][input_len:], skip_special_tokens=True)
+            else:
+                gen = self._tokenizer.decode(out[0][input_len:], skip_special_tokens=True)
+
             responses.append(ModelResponse(text=[gen]))
 
             del inputs, out
