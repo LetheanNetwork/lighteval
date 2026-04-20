@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import os
+import threading
 
 
 def timeout(timeout_seconds: int = 10):  # noqa: C901
@@ -32,13 +33,14 @@ def timeout(timeout_seconds: int = 10):  # noqa: C901
 
     Notes:
         On Unix systems, uses a signal-based alarm approach which is more efficient as it doesn't require spawning a new process.
+        However, signal.signal only works in the main thread. If called from a sub-thread, it falls back to a timer approach.
         On Windows systems, uses a multiprocessing-based approach since signal.alarm is not available. This will incur a huge performance penalty.
 
     Returns:
         Callable: A decorator function that wraps the original function with timeout functionality
     """
     if os.name == "posix":
-        # Unix-like approach: signal.alarm
+        # Unix-like approach: signal.alarm or Timer thread if not in main thread
         import signal
 
         def decorator(func):
@@ -46,15 +48,45 @@ def timeout(timeout_seconds: int = 10):  # noqa: C901
                 raise TimeoutError("Operation timed out!")
 
             def wrapper(*args, **kwargs):
-                old_handler = signal.getsignal(signal.SIGALRM)
-                signal.signal(signal.SIGALRM, handler)
-                signal.alarm(timeout_seconds)
-                try:
-                    return func(*args, **kwargs)
-                finally:
-                    # Cancel the alarm and restore previous handler
-                    signal.alarm(0)
-                    signal.signal(signal.SIGALRM, old_handler)
+                if threading.current_thread() is threading.main_thread():
+                    # We are in the main thread, we can use signals
+                    old_handler = signal.getsignal(signal.SIGALRM)
+                    signal.signal(signal.SIGALRM, handler)
+                    signal.alarm(timeout_seconds)
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        # Cancel the alarm and restore previous handler
+                        signal.alarm(0)
+                        signal.signal(signal.SIGALRM, old_handler)
+                else:
+                    # We are in a subthread, signals don't work. Use a timer that raises an exception in this thread.
+                    # Since ctypes is messy, a simple but suboptimal fallback is to use the Thread/Queue approach like Windows.
+                    from queue import Queue
+                    from threading import Thread
+
+                    q = Queue()
+
+                    def run_func(q, args, kwargs):
+                        try:
+                            result = func(*args, **kwargs)
+                            q.put((True, result))
+                        except Exception as e:
+                            q.put((False, e))
+
+                    t = Thread(target=run_func, args=(q, args, kwargs))
+                    t.start()
+                    t.join(timeout_seconds)
+
+                    if t.is_alive():
+                        # We cannot terminate a thread easily in python, so we just raise TimeoutError and leave the thread hanging
+                        raise TimeoutError("Operation timed out (in sub-thread)!")
+
+                    success, value = q.get()
+                    if success:
+                        return value
+                    else:
+                        raise value
 
             return wrapper
 
