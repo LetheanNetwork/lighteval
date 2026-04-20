@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from .analyze import analyze_pair  # noqa: F401 (re-exported for convenience)
+from .analyze import analyze_pair, analyze_single  # noqa: F401 (re-exported for convenience)
 
 
 PLOT_COLORS = {
@@ -27,7 +27,7 @@ def _pretty_model_name(model_path: str) -> str:
     return Path(str(model_path)).name or str(model_path)
 
 
-def _build_markdown(
+def _build_markdown_pair(
     result,
     totals: Dict[str, Any],
     question_summaries: List[Dict[str, Any]],
@@ -100,7 +100,73 @@ def _build_markdown(
     return "\n".join(lines)
 
 
-def _build_score_figure(totals: Dict[str, Any]):
+def _build_markdown_single(
+    result,
+    totals: Dict[str, Any],
+    question_summaries: List[Dict[str, Any]],
+    max_questions: int,
+    preview_chars: int,
+) -> str:
+    base_model = _pretty_model_name(totals["base"]["model"])
+    hw_plan = getattr(result, "hardware_plan", None) or "auto"
+    n_questions = getattr(result, "n_questions", len(question_summaries))
+    samples_start = getattr(result, "samples_start", 0)
+
+    lines: List[str] = [
+        f"# Gemma 4 eval — `{result.run_name}`",
+        "",
+        f"Task `{result.task}` · slice `{n_questions} × {result.rounds}` · starts at `{samples_start}` · hardware `{hw_plan}`",
+        "",
+        "> *Slice benchmark (single model on the same questions). Percentages below are accuracy on this slice, not full-benchmark leaderboard scores.*",
+        "",
+        "## Scores",
+        "",
+        "| Side | Model | Per-round | Majority | Correct |",
+        "|---|---|---:|---:|---:|",
+        f"| base | `{base_model}` | {totals['base']['per_round_accuracy_pct']:.2f}% | "
+        f"{totals['base']['majority_accuracy_pct']:.2f}% | "
+        f"{totals['base']['correct']}/{totals['base']['samples']} |",
+        "",
+    ]
+
+    shown = question_summaries[:max_questions]
+    if shown:
+        lines.append("## Per-question breakdown")
+        lines.append("")
+    for q in shown:
+        gold_letter = q["gold_letter"]
+        gold_text = q["gold_text"] or "—"
+        body = q["question"][:preview_chars].strip()
+        lines.append(f"### Question {q['question_index']}")
+        lines.append("")
+        lines.append(f"**Gold** `{gold_letter}` — {gold_text}")
+        lines.append("")
+        lines.append(f"> {body}")
+        lines.append("")
+        lines.append("| Side | Majority | Matches gold | Hits | Answers |")
+        lines.append("|---|:---:|:---:|---:|---|")
+        
+        data = q["base"]
+        majority = data["majority_answer"]
+        matches = (
+            "yes" if majority == gold_letter and gold_letter != "?" else "no"
+        )
+        answers = " ".join(data["answers"]) or "—"
+        lines.append(
+            f"| base | `{majority}` | {matches} | "
+            f"{sum(data['hits'])}/{data['total']} | {answers} |"
+        )
+        lines.append("")
+
+    hidden = len(question_summaries) - len(shown)
+    if hidden > 0:
+        lines.append(f"*…{hidden} more question(s) saved in the result files.*")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_score_figure_pair(totals: Dict[str, Any]):
     import plotly.express as px
 
     score_df = pd.DataFrame(
@@ -136,7 +202,41 @@ def _build_score_figure(totals: Dict[str, Any]):
     return fig
 
 
-def _build_hit_heatmap(detail_df: pd.DataFrame):
+def _build_score_figure_single(totals: Dict[str, Any]):
+    import plotly.express as px
+
+    score_df = pd.DataFrame(
+        [
+            {"model": "base", "metric": "per-round accuracy", "pct": totals["base"]["per_round_accuracy_pct"]},
+            {"model": "base", "metric": "majority accuracy", "pct": totals["base"]["majority_accuracy_pct"]},
+        ]
+    )
+    score_df["label"] = score_df["pct"].map(lambda v: f"{v:.1f}%")
+    fig = px.bar(
+        score_df,
+        x="metric",
+        y="pct",
+        color="model",
+        barmode="group",
+        text="label",
+        color_discrete_map={"base": PLOT_COLORS["base"]},
+        title="Score snapshot",
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        yaxis_title="accuracy percent",
+        xaxis_title="",
+        yaxis_range=[0, 105],
+        legend_title_text="model side",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(t=70, r=30, b=50, l=50),
+    )
+    fig.update_yaxes(gridcolor="#e8eef5")
+    return fig
+
+
+def _build_hit_heatmap(detail_df: pd.DataFrame, single_mode: bool = False):
     if detail_df.empty:
         return None
     import plotly.graph_objects as go
@@ -144,7 +244,9 @@ def _build_hit_heatmap(detail_df: pd.DataFrame):
     heat_df = detail_df.copy()
     heat_df["row_label"] = heat_df["model_side"] + " R" + heat_df["round"].astype(int).astype(str)
     row_order: List[str] = []
-    for side in ("base", "test"):
+    
+    sides = ("base",) if single_mode else ("base", "test")
+    for side in sides:
         rounds = sorted(
             heat_df.loc[heat_df["model_side"] == side, "round"].dropna().astype(int).unique()
         )
@@ -214,21 +316,53 @@ def render(
     Returns the markdown string when `display_inline=False`, otherwise None
     so notebook cells don't echo the raw source below the rendered output.
     """
-    detail_df, question_summaries, totals = result.analyze()
+    
+    single_mode = not getattr(result, "test_source", None) or not getattr(result, "test_detail_paths", [])
 
-    md = _build_markdown(
-        result=result,
-        totals=totals,
-        question_summaries=question_summaries,
-        max_questions=max_questions,
-        preview_chars=preview_chars,
-    )
+    if single_mode:
+        from .analyze import analyze_single
+        detail_df, question_summaries, totals = analyze_single(
+            base_paths=result.base_detail_paths,
+            base_model_name=result.base_source,
+            run_name=result.run_name,
+            task=result.task,
+            samples_start=result.samples_start,
+        )
+        
+        md = _build_markdown_single(
+            result=result,
+            totals=totals,
+            question_summaries=question_summaries,
+            max_questions=max_questions,
+            preview_chars=preview_chars,
+        )
+        
+        score_fig_builder = _build_score_figure_single
+        
+    else:
+        detail_df, question_summaries, totals = result.analyze()
+
+        md = _build_markdown_pair(
+            result=result,
+            totals=totals,
+            question_summaries=question_summaries,
+            max_questions=max_questions,
+            preview_chars=preview_chars,
+        )
+        
+        score_fig_builder = _build_score_figure_pair
+
+    # Save to CSV for Kaggle native viewing
+    if result.output_dir:
+        out = Path(result.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        detail_df.to_csv(out / "comparison_details.csv", index=False)
 
     figures = []
     if show_plotly:
         try:
-            score_fig = _build_score_figure(totals)
-            heat_fig = _build_hit_heatmap(detail_df)
+            score_fig = score_fig_builder(totals)
+            heat_fig = _build_hit_heatmap(detail_df, single_mode=single_mode)
             figures = [fig for fig in (score_fig, heat_fig) if fig is not None]
         except ImportError:
             figures = []

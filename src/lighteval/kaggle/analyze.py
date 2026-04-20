@@ -49,6 +49,26 @@ def _choice_map_from_query(query: str) -> Dict[str, str]:
     return dict(re.findall(r"^([A-Z]):\s*(.+?)$", str(query), re.MULTILINE))
 
 
+def analyze_single(
+    base_paths: List[str],
+    base_model_name: str,
+    run_name: str,
+    task: str,
+    samples_start: int = 0,
+) -> Tuple[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]]:
+    """Parse single model detail parquets."""
+    return analyze_pair(
+        base_paths=base_paths,
+        test_paths=[],
+        base_model_name=base_model_name,
+        test_model_name="N/A",
+        run_name=run_name,
+        task=task,
+        samples_start=samples_start,
+        single_mode=True,
+    )
+
+
 def analyze_pair(
     base_paths: List[str],
     test_paths: List[str],
@@ -57,6 +77,7 @@ def analyze_pair(
     run_name: str,
     task: str,
     samples_start: int = 0,
+    single_mode: bool = False,
 ) -> Tuple[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]]:
     """Parse paired details parquets into (detail_df, question_summaries, totals)."""
 
@@ -74,6 +95,10 @@ def analyze_pair(
     rows: List[Dict[str, Any]] = []
     question_summaries: List[Dict[str, Any]] = []
 
+    sides = [("base", base_dfs, base_model_name)]
+    if not single_mode:
+        sides.append(("test", test_dfs, test_model_name))
+
     for q_idx in range(len(ref_df)):
         doc = ref_df.iloc[q_idx].get("doc", {})
         query = doc.get("query", "") if isinstance(doc, dict) else str(doc)
@@ -85,10 +110,7 @@ def analyze_pair(
         qbody = qbody_match.group(1).strip() if qbody_match else str(query)[:500]
 
         per_side: Dict[str, Dict[str, Any]] = {}
-        for side, dfs, model_name in [
-            ("base", base_dfs, base_model_name),
-            ("test", test_dfs, test_model_name),
-        ]:
+        for side, dfs, model_name in sides:
             answers: List[str] = []
             hits: List[int] = []
             for round_num, df in enumerate(dfs, start=1):
@@ -130,20 +152,22 @@ def analyze_pair(
                 "majority_hit": int(majority == gold_letter) if gold_letter != "?" else 0,
             }
 
-        question_summaries.append(
-            {
-                "question_index": samples_start + q_idx,
-                "question": qbody,
-                "gold_letter": gold_letter,
-                "gold_text": gold_text,
-                "base": per_side["base"],
-                "test": per_side["test"],
-            }
-        )
+        summary = {
+            "question_index": samples_start + q_idx,
+            "question": qbody,
+            "gold_letter": gold_letter,
+            "gold_text": gold_text,
+            "base": per_side.get("base", {}),
+        }
+        if not single_mode:
+            summary["test"] = per_side.get("test", {})
+            
+        question_summaries.append(summary)
 
     detail_df = pd.DataFrame(rows)
     totals: Dict[str, Any] = {}
-    for side in ("base", "test"):
+    
+    for side in ("base", "test") if not single_mode else ("base",):
         side_df = detail_df[detail_df.model_side == side]
         total = len(side_df)
         correct = int(side_df.hit.sum()) if total else 0
@@ -159,11 +183,13 @@ def analyze_pair(
             if question_summaries
             else 0.0,
         }
-    totals["delta_pp"] = round(
-        totals["test"]["per_round_accuracy_pct"] - totals["base"]["per_round_accuracy_pct"], 2
-    )
-    totals["majority_delta_pp"] = round(
-        totals["test"]["majority_accuracy_pct"] - totals["base"]["majority_accuracy_pct"], 2
-    )
+        
+    if not single_mode:
+        totals["delta_pp"] = round(
+            totals["test"]["per_round_accuracy_pct"] - totals["base"]["per_round_accuracy_pct"], 2
+        )
+        totals["majority_delta_pp"] = round(
+            totals["test"]["majority_accuracy_pct"] - totals["base"]["majority_accuracy_pct"], 2
+        )
 
     return detail_df, question_summaries, totals
