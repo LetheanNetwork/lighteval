@@ -39,7 +39,7 @@ class Gemma4EvalResult:
     run_name: str
     task: str
     base_source: str
-    test_source: str
+    test_source: Optional[str]
     rounds: int
     n_questions: int = 1
     samples_start: int = 0
@@ -56,6 +56,9 @@ class Gemma4EvalResult:
             return self._analysis
         from .analyze import analyze_pair
 
+        if not self.test_source or not self.test_detail_paths:
+            raise RuntimeError("Cannot analyze pair: no test model evaluated.")
+
         self._analysis = analyze_pair(
             base_paths=self.base_detail_paths,
             test_paths=self.test_detail_paths,
@@ -69,20 +72,23 @@ class Gemma4EvalResult:
 
     def dashboard(self, **kwargs) -> str:
         """Render the comparison dashboard inline and return the HTML."""
+        if not self.test_source or not self.test_detail_paths:
+            print("Dashboard skipped: Only one model evaluated.")
+            return ""
         from .dashboard import render as _render
-
         return _render(self, **kwargs)
 
     def dump_research(self, *, include_responses: bool = True) -> Path:
         """Write per-question prompt+response markdown under `<output_dir>/research`."""
         from .research import dump as _dump
-
         return _dump(self, include_responses=include_responses)
 
     def save_report(self) -> Path:
         """Write summary.csv, summary.json, report.md, and visual_report.html to the output directory."""
+        if not self.test_source or not self.test_detail_paths:
+            raise RuntimeError("save_report requires both base and test models to be evaluated.")
+            
         import datetime as dt
-
         import pandas as pd
 
         if self.output_dir is None:
@@ -191,12 +197,12 @@ class Gemma4EvalResult:
 
 
 class Gemma4Eval:
-    """Paired evaluation of two Gemma 4 models over the same task and sampling recipe."""
+    """Evaluation of one or two Gemma 4 models over the same task and sampling recipe."""
 
     def __init__(
         self,
         base,
-        test,
+        test=None,
         task: str = "mmlu_pro",
         rounds: int = 1,
         n_questions: int = 1,
@@ -212,7 +218,7 @@ class Gemma4Eval:
         self._base_arg = base
         self._test_arg = test
         self.base_source = self._source_label(base)
-        self.test_source = self._source_label(test)
+        self.test_source = self._source_label(test) if test is not None else None
         self.task = _expand_task(task)
         self.rounds = rounds
         self.n_questions = n_questions
@@ -260,11 +266,15 @@ class Gemma4Eval:
                 return source.rstrip("/").split("/")[-1]
             return getattr(source, "model_path", type(source).__name__).rstrip("/").split("/")[-1]
 
+        if test is None:
+            return f"gemma4-{tail(base)}"
         return f"gemma4-{tail(base)}-vs-{tail(test)}"
 
     @staticmethod
     def _resolve_side(source, label: str):
         """String → model path (via loader); instance or factory → pass through."""
+        if source is None:
+            return None
         if isinstance(source, str):
             return resolve_model_source(source, label=label)
         return source
@@ -273,7 +283,7 @@ class Gemma4Eval:
         """Resolve models, run all rounds, and return a populated Gemma4EvalResult."""
         print(f"=== Gemma4Eval: {self.run_name} ===")
         base_path = self._resolve_side(self._base_arg, label="base")
-        test_path = self._resolve_side(self._test_arg, label="test")
+        test_path = self._resolve_side(self._test_arg, label="test") if self._test_arg is not None else None
 
         num_gpus = self._visible_gpu_count()
         devices = self._list_devices(num_gpus)
@@ -289,6 +299,9 @@ class Gemma4Eval:
         # Safety net: If parallel=True was explicitly forced, verify we actually have the hardware.
         if use_parallel and num_gpus < 2:
             print("Warning: parallel=True requested, but fewer than 2 GPUs found. Falling back to sequential execution.")
+            use_parallel = False
+
+        if test_path is None:
             use_parallel = False
 
         print(f"Devices: {devices}  parallel={use_parallel}")
@@ -319,9 +332,10 @@ class Gemma4Eval:
                 result.base_detail_paths.append(
                     self._run_one(base_path, "base", round_idx, gpu_index=None)
                 )
-                result.test_detail_paths.append(
-                    self._run_one(test_path, "test", round_idx, gpu_index=None)
-                )
+                if test_path is not None:
+                    result.test_detail_paths.append(
+                        self._run_one(test_path, "test", round_idx, gpu_index=None)
+                    )
 
         # Locate the tracker's output dir via the side from the last round.
         if result.base_detail_paths:
@@ -332,7 +346,7 @@ class Gemma4Eval:
                 out_dir = out_dir.parent
             result.output_dir = out_dir.parent.parent
 
-        if self.research:
+        if self.research and test_path is not None:
             result.dump_research()
 
         print(f"=== run complete — details under {result.output_dir} ===")
