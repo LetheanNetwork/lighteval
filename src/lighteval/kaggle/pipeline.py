@@ -204,7 +204,7 @@ class Gemma4Eval:
         generation: Optional[GenerationConfig] = None,
         device_map: str = "auto",
         dtype: str = "auto",
-        parallel: str = "auto",
+        parallel: bool | str = False,  # Default to False! Sharing GPUs is chaotic.
         run_name: Optional[str] = None,
         backend: str = "auto",
         research: bool = False,
@@ -278,9 +278,7 @@ class Gemma4Eval:
         num_gpus = self._visible_gpu_count()
         devices = self._list_devices(num_gpus)
         
-        # Smart default for parallel: if we are loading via path/string, we can easily map models to different GPUs.
-        # If the user passes a pre-loaded model or factory function, we might cause OOMs if we try to parallelize blindly.
-        # Therefore, 'auto' means: parallelize IF we have 2+ GPUs AND the models are paths.
+        # Determine if we should run in parallel
         use_parallel = self.parallel
         if use_parallel == "auto":
             if num_gpus >= 2 and isinstance(self._base_arg, str) and isinstance(self._test_arg, str):
