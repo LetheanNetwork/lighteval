@@ -279,7 +279,7 @@ class Gemma4Eval:
         devices = self._list_devices(num_gpus)
         
         # Determine if we should run in parallel
-        use_parallel = self.parallel
+        use_parallel = False
         if use_parallel == "auto":
             if num_gpus >= 2 and isinstance(self._base_arg, str) and isinstance(self._test_arg, str):
                 use_parallel = True
