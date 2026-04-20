@@ -204,7 +204,7 @@ class Gemma4Eval:
         generation: Optional[GenerationConfig] = None,
         device_map: str = "auto",
         dtype: str = "auto",
-        parallel: bool = True,
+        parallel: str = "auto",
         run_name: Optional[str] = None,
         backend: str = "auto",
         research: bool = False,
@@ -277,7 +277,22 @@ class Gemma4Eval:
 
         num_gpus = self._visible_gpu_count()
         devices = self._list_devices(num_gpus)
-        use_parallel = self.parallel and num_gpus >= 2
+        
+        # Smart default for parallel: if we are loading via path/string, we can easily map models to different GPUs.
+        # If the user passes a pre-loaded model or factory function, we might cause OOMs if we try to parallelize blindly.
+        # Therefore, 'auto' means: parallelize IF we have 2+ GPUs AND the models are paths.
+        use_parallel = self.parallel
+        if use_parallel == "auto":
+            if num_gpus >= 2 and isinstance(self._base_arg, str) and isinstance(self._test_arg, str):
+                use_parallel = True
+            else:
+                use_parallel = False
+        
+        # Safety net: If parallel=True was explicitly forced, verify we actually have the hardware.
+        if use_parallel and num_gpus < 2:
+            print("Warning: parallel=True requested, but fewer than 2 GPUs found. Falling back to sequential execution.")
+            use_parallel = False
+
         print(f"Devices: {devices}  parallel={use_parallel}")
 
         result = Gemma4EvalResult(
@@ -304,10 +319,10 @@ class Gemma4Eval:
                     result.test_detail_paths.append(ft.result())
             else:
                 result.base_detail_paths.append(
-                    self._run_one(base_path, "base", round_idx, gpu_index=0 if num_gpus else None)
+                    self._run_one(base_path, "base", round_idx, gpu_index=None)
                 )
                 result.test_detail_paths.append(
-                    self._run_one(test_path, "test", round_idx, gpu_index=0 if num_gpus else None)
+                    self._run_one(test_path, "test", round_idx, gpu_index=None)
                 )
 
         # Locate the tracker's output dir via the side from the last round.
